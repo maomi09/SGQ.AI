@@ -1,0 +1,41 @@
+# Environment variables
+# 排除所有 .env 檔案，但保留 .env.example 範本檔案
+.env
+backend/.env
+**/.env
+!.env.example
+!**/.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# Flutter/Dart
+app/.dart_tool/
+app/.flutter-plugins-dependencies
+app/.metadata
+app/build/
+app/.idea/
+app/*.iml
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
