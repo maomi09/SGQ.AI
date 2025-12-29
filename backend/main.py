@@ -181,6 +181,13 @@ class QuestionRequest(BaseModel):
     stage: int
 
 
+class AdditionalQuestionRequest(BaseModel):
+    user_message: str
+    question: str
+    stage: int
+    conversation_history: List[Dict[str, Any]]
+
+
 class ChatGPTResponse(BaseModel):
     response: str
 
@@ -265,6 +272,60 @@ Your scaffolding should support four dimensions:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
+            temperature=0.7,
+            max_tokens=500
+        )
+
+        return ChatGPTResponse(
+            response=response.choices[0].message.content
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/chatgpt/additional", response_model=ChatGPTResponse)
+async def get_additional_response(request: AdditionalQuestionRequest):
+    try:
+        system_prompt = """You are an instructional AI tutor designed to support university EFL students in student-generated grammar question (SGQ) activities.
+
+Your role is to provide scaffolding, not answers.
+
+IMPORTANT RULES:
+1. Do NOT rewrite the student's question.
+2. Do NOT provide the correct answer to the question.
+3. Do NOT generate a complete sample question.
+4. Focus on guiding, prompting, and raising awareness.
+5. Use clear, supportive, and instructional language.
+6. When appropriate, ask reflective questions instead of giving direct judgments.
+
+Your scaffolding should support four dimensions:
+- Form-focused scaffolding
+- Linguistic scaffolding
+- Cognitive scaffolding
+- Metacognitive scaffolding"""
+
+        # 構建消息列表
+        messages = [
+            {"role": "system", "content": system_prompt}
+        ]
+
+        # 添加對話歷史
+        for msg in request.conversation_history:
+            role = "user" if msg.get("type") == "user" else "assistant"
+            messages.append({
+                "role": role,
+                "content": msg.get("content", "")
+            })
+
+        # 添加用戶的新問題
+        messages.append({
+            "role": "user",
+            "content": request.user_message
+        })
+
+        response = openai_client.chat.completions.create(
+            model="gpt-4",
+            messages=messages,
             temperature=0.7,
             max_tokens=500
         )

@@ -7,7 +7,6 @@ import '../../providers/auth_provider.dart';
 import '../../services/chatgpt_service.dart';
 import '../../services/supabase_service.dart';
 import '../../models/question_model.dart';
-import '../../config/app_config.dart';
 
 class ChatGPTChatScreen extends StatefulWidget {
   const ChatGPTChatScreen({super.key});
@@ -612,9 +611,7 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
       print('User message added');
 
       print('Creating ChatGPTService...');
-      final chatGPTService = ChatGPTService(
-        apiKey: AppConfig.chatGPTApiKey,
-      );
+      final chatGPTService = ChatGPTService();
 
       print('Sending ChatGPT request for stage $stage...');
       final response = await chatGPTService.getScaffoldingResponse(
@@ -698,9 +695,7 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
     
     try {
       print('Creating ChatGPTService...');
-      final chatGPTService = ChatGPTService(
-        apiKey: AppConfig.chatGPTApiKey,
-      );
+      final chatGPTService = ChatGPTService();
 
       // 獲取當前階段的對話歷史
       print('Getting conversation history for stage $currentStage...');
@@ -774,8 +769,10 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
               topRight: Radius.circular(20),
             ),
           ),
-          child: Column(
-            children: [
+          child: SafeArea(
+            bottom: false,
+            child: Column(
+              children: [
               // 標題欄
               Container(
                 padding: const EdgeInsets.all(16),
@@ -956,32 +953,38 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
               // 對話列表
               if (!_showQuestionSelector)
                 Expanded(
-                  child: _currentQuestion == null
-                      ? const Center(
-                          child: Text('請選擇一個題目'),
-                        )
-                      : chatProvider.selectedStage == null
-                          ? const Center(
-                              child: Text('請選擇一個階段開始'),
-                            )
-                          : Builder(
-                              builder: (context) {
-                                // 過濾出當前階段的消息
-                                final currentStageMessages = chatProvider.messages
-                                    .where((msg) => msg['stage'] == chatProvider.selectedStage)
-                                    .toList();
-                                
-                                if (currentStageMessages.isEmpty && !chatProvider.isLoading) {
-                                  return const Center(
-                                    child: Text('該階段尚未開始對話'),
-                                  );
-                                }
-                                
-                                return ListView.builder(
-                                  controller: _scrollController,
-                                  padding: const EdgeInsets.all(16),
-                                  itemCount: currentStageMessages.length + (chatProvider.isLoading ? 1 : 0),
-                                  itemBuilder: (context, index) {
+                  child: GestureDetector(
+                    onTap: () {
+                      // 點擊空白處收回鍵盤
+                      FocusScope.of(context).unfocus();
+                    },
+                    behavior: HitTestBehavior.translucent,
+                    child: _currentQuestion == null
+                        ? const Center(
+                            child: Text('請選擇一個題目'),
+                          )
+                        : chatProvider.selectedStage == null
+                            ? const Center(
+                                child: Text('請選擇一個階段開始'),
+                              )
+                            : Builder(
+                                builder: (context) {
+                                  // 過濾出當前階段的消息
+                                  final currentStageMessages = chatProvider.messages
+                                      .where((msg) => msg['stage'] == chatProvider.selectedStage)
+                                      .toList();
+                                  
+                                  if (currentStageMessages.isEmpty && !chatProvider.isLoading) {
+                                    return const Center(
+                                      child: Text('該階段尚未開始對話'),
+                                    );
+                                  }
+                                  
+                                  return ListView.builder(
+                                    controller: _scrollController,
+                                    padding: const EdgeInsets.all(16),
+                                    itemCount: currentStageMessages.length + (chatProvider.isLoading ? 1 : 0),
+                                    itemBuilder: (context, index) {
                                     if (index == currentStageMessages.length) {
                                       return const Center(
                                         child: Padding(
@@ -1042,6 +1045,7 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
                                 );
                               },
                             ),
+                  ),
                 ),
               // 輸入框（當有選中階段時顯示）
               if (!_showQuestionSelector && chatProvider.selectedStage != null)
@@ -1071,6 +1075,13 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
                           maxLines: null,
                           textInputAction: TextInputAction.send,
                           onSubmitted: (_) => _sendAdditionalMessage(),
+                          scrollPadding: const EdgeInsets.all(20.0),
+                          onTap: () {
+                            // 當點擊輸入框時，滾動到底部，確保輸入框可見
+                            Future.delayed(const Duration(milliseconds: 300), () {
+                              _scrollToBottom();
+                            });
+                          },
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -1123,10 +1134,11 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
                 ),
             ],
           ),
-        );
-      },
-    );
-  }
+            ),
+          );
+        },
+      );
+    }
 
   Widget _buildStageButton(int stage, String label, ChatProvider chatProvider) {
     final isSelected = chatProvider.selectedStage == stage;
@@ -1262,11 +1274,24 @@ void showChatDialog(BuildContext context) {
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
+    useSafeArea: true,
+    // iOS 需要啟用這個選項以獲得更好的鍵盤處理
+    enableDrag: true,
     builder: (context) => DraggableScrollableSheet(
       initialChildSize: 0.9,
       minChildSize: 0.5,
       maxChildSize: 0.95,
-      builder: (context, scrollController) => const ChatGPTChatScreen(),
+      builder: (context, scrollController) {
+        final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+        // iOS 和 Android 都使用相同的處理方式
+        // MediaQuery.of(context).viewInsets.bottom 在兩個平台上都能正確工作
+        return AnimatedPadding(
+          padding: EdgeInsets.only(bottom: keyboardHeight),
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+          child: const ChatGPTChatScreen(),
+        );
+      },
     ),
   );
 }
