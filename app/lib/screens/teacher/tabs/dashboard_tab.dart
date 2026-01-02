@@ -341,6 +341,9 @@ class _DashboardTabState extends State<DashboardTab> {
               const SizedBox(height: 20),
               Flexible(
                 child: SingleChildScrollView(
+                  padding: EdgeInsets.only(
+                    bottom: MediaQuery.of(context).padding.bottom + 100,
+                  ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -866,7 +869,11 @@ class _DashboardTabState extends State<DashboardTab> {
                           ),
                         )
                       : ListView.builder(
-                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          padding: EdgeInsets.only(
+                            left: 20,
+                            right: 20,
+                            bottom: MediaQuery.of(context).padding.bottom + 100,
+                          ),
                           itemCount: _studentsProgress.length,
                           itemBuilder: (context, index) {
                             final student = _studentsProgress[index];
@@ -1100,7 +1107,7 @@ class _DashboardTabState extends State<DashboardTab> {
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
       ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+      floatingActionButtonLocation: _CustomFloatingActionButtonLocation(),
     );
   }
 
@@ -1349,5 +1356,24 @@ class _DashboardTabState extends State<DashboardTab> {
     );
 
     await _supabaseService.createBadge(badge);
+  }
+}
+
+class _CustomFloatingActionButtonLocation extends FloatingActionButtonLocation {
+  const _CustomFloatingActionButtonLocation();
+
+  @override
+  Offset getOffset(ScaffoldPrelayoutGeometry scaffoldGeometry) {
+    // 導航欄高度約 80px + 底部間距 16px + SafeArea + 額外安全間距
+    // 使用 minInsets.bottom 獲取底部安全區域
+    final double safeAreaBottom = scaffoldGeometry.minInsets.bottom;
+    final double navigationBarHeight = 80 + 16 + safeAreaBottom + 30;
+    final double bottom = scaffoldGeometry.scaffoldSize.height -
+        scaffoldGeometry.floatingActionButtonSize.height -
+        navigationBarHeight;
+    final double right = scaffoldGeometry.scaffoldSize.width -
+        scaffoldGeometry.floatingActionButtonSize.width -
+        16; // 右邊距
+    return Offset(right, bottom);
   }
 }

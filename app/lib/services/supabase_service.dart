@@ -1307,6 +1307,109 @@ class SupabaseService {
     }).length;
   }
 
+  // Student Management - Get all students (simple list)
+  Future<List<Map<String, dynamic>>> getAllStudents() async {
+    try {
+      final response = await _client
+          .from('users')
+          .select('id, name, email, student_id, created_at')
+          .eq('role', 'student')
+          .order('created_at', ascending: false);
+      
+      return (response as List).map((student) => {
+        'id': student['id'],
+        'name': student['name'],
+        'email': student['email'],
+        'student_id': student['student_id'],
+        'created_at': student['created_at'],
+      }).toList();
+    } catch (e) {
+      print('Error getting all students: $e');
+      rethrow;
+    }
+  }
+
+  // Student Management - Update student
+  Future<void> updateStudent(
+    String studentId, {
+    String? name,
+    String? email,
+    String? studentIdNumber,
+  }) async {
+    try {
+      final updates = <String, dynamic>{};
+      
+      if (name != null) {
+        updates['name'] = name;
+      }
+      if (email != null) {
+        updates['email'] = email;
+      }
+      if (studentIdNumber != null) {
+        updates['student_id'] = studentIdNumber;
+      }
+
+      if (updates.isEmpty) {
+        return;
+      }
+
+      // 更新 users 表
+      await _client
+          .from('users')
+          .update(updates)
+          .eq('id', studentId);
+
+      // 如果更新了 email，也需要更新 auth.users
+      if (email != null) {
+        // 注意：更新 auth.users 需要管理員權限或使用服務角色
+        // 這裡我們只更新 users 表，email 的實際更改可能需要通過 Supabase Admin API
+        print('Note: Email update in auth.users may require admin privileges');
+      }
+    } catch (e) {
+      print('Error updating student: $e');
+      rethrow;
+    }
+  }
+
+  // Student Management - Delete student
+  Future<void> deleteStudent(String studentId) async {
+    try {
+      // 先刪除相關資料（題目、徽章等）
+      await _client
+          .from('questions')
+          .delete()
+          .eq('student_id', studentId);
+      
+      await _client
+          .from('badges')
+          .delete()
+          .eq('student_id', studentId);
+
+      await _client
+          .from('user_sessions')
+          .delete()
+          .eq('student_id', studentId);
+
+      await _client
+          .from('chat_messages')
+          .delete()
+          .eq('student_id', studentId);
+
+      // 最後刪除 users 表中的記錄
+      await _client
+          .from('users')
+          .delete()
+          .eq('id', studentId);
+
+      // 注意：刪除 auth.users 中的記錄需要管理員權限
+      // 這裡我們只刪除 users 表，auth.users 的記錄可能需要通過 Supabase Admin API 刪除
+      print('Note: Auth user deletion may require admin privileges');
+    } catch (e) {
+      print('Error deleting student: $e');
+      rethrow;
+    }
+  }
+
   // Chat Messages
   Future<void> saveChatMessage({
     required String questionId,

@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../../providers/auth_provider.dart';
 import '../../../utils/user_animal_helper.dart';
 import '../edit_profile_screen.dart';
+import '../../teacher/student_management_screen.dart';
 
 class ProfileTab extends StatefulWidget {
   const ProfileTab({super.key});
@@ -130,7 +131,11 @@ class _ProfileTabState extends State<ProfileTab> {
             // 主要內容區域
             Expanded(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
+                padding: EdgeInsets.only(
+                  left: 20,
+                  right: 20,
+                  bottom: MediaQuery.of(context).padding.bottom + 100,
+                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -209,8 +214,10 @@ class _ProfileTabState extends State<ProfileTab> {
                     ),
                     const SizedBox(height: 24),
                     // 操作按鈕
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    Wrap(
+                      alignment: WrapAlignment.spaceAround,
+                      spacing: 16,
+                      runSpacing: 16,
                       children: [
                         _buildActionButton(
                           context,
@@ -255,6 +262,19 @@ class _ProfileTabState extends State<ProfileTab> {
                             ),
                           ),
                         ),
+                        if (user.role == 'teacher')
+                          _buildActionButton(
+                            context,
+                            icon: Icons.people,
+                            label: '管理學生',
+                            color: Colors.purple,
+                            onTap: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => const StudentManagementScreen(),
+                              ),
+                            ),
+                          ),
                       ],
                     ),
                     const SizedBox(height: 32),

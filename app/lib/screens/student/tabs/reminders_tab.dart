@@ -327,7 +327,11 @@ class _RemindersTabState extends State<RemindersTab> {
                               ),
                             )
                           : ListView.builder(
-                              padding: const EdgeInsets.symmetric(horizontal: 20),
+                              padding: EdgeInsets.only(
+                                left: 20,
+                                right: 20,
+                                bottom: MediaQuery.of(context).padding.bottom + 100,
+                              ),
                               itemCount: _reminders.length,
                               itemBuilder: (context, index) {
                                 final reminder = _reminders[index];

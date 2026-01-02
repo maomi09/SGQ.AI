@@ -630,7 +630,11 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
                           ),
                         )
                       : SingleChildScrollView(
-                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          padding: EdgeInsets.only(
+                            left: 20,
+                            right: 20,
+                            bottom: MediaQuery.of(context).padding.bottom + 100,
+                          ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [

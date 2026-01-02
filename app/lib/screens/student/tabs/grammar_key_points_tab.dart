@@ -327,7 +327,11 @@ class _GrammarKeyPointsTabState extends State<GrammarKeyPointsTab> {
                               ),
                             )
                           : ListView.builder(
-                              padding: const EdgeInsets.symmetric(horizontal: 20),
+                              padding: EdgeInsets.only(
+                                left: 20,
+                                right: 20,
+                                bottom: MediaQuery.of(context).padding.bottom + 100,
+                              ),
                               itemCount: _keyPoints.length,
                               itemBuilder: (context, index) {
                                 final point = _keyPoints[index];
