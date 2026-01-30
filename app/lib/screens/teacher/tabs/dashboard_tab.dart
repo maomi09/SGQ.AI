@@ -21,6 +21,8 @@ class _DashboardTabState extends State<DashboardTab> {
   List<Map<String, dynamic>> _studentsProgress = [];
   bool _isLoading = true;
   Timer? _refreshTimer;
+  Set<String> _resolvedStudentIds = {}; // 已標記為「已完成」的學生 ID
+  Map<String, bool> _studentsOnlineStatus = {}; // 學生的登入狀態
 
   @override
   void initState() {
@@ -50,7 +52,14 @@ class _DashboardTabState extends State<DashboardTab> {
     });
 
     try {
+      // 同時載入已標記為「已完成」的學生 ID
+      _resolvedStudentIds = await _supabaseService.getResolvedStudentIds();
+      
       final progress = await _supabaseService.getAllStudentsProgress();
+      
+      // 獲取所有學生的登入狀態
+      final studentIds = progress.map((s) => s['student_id'] as String).toList();
+      _studentsOnlineStatus = await _supabaseService.getStudentsOnlineStatus(studentIds);
       print('Dashboard: Received ${progress.length} students');
       
       // 獲取所有課程，建立 ID 到課程名稱的映射
@@ -272,6 +281,11 @@ class _DashboardTabState extends State<DashboardTab> {
   }
 
   bool _hasAlert(Map<String, dynamic> student) {
+    // 如果學生已被標記為「已完成」，則不顯示警告
+    final studentId = student['student_id'] as String?;
+    if (studentId != null && _resolvedStudentIds.contains(studentId)) {
+      return false;
+    }
     return _isStuck(student) || _isStageAbnormal(student);
   }
 
@@ -303,6 +317,7 @@ class _DashboardTabState extends State<DashboardTab> {
     bool isAbnormal,
   ) {
     final stage = student['current_stage'] as int? ?? 1;
+    final studentId = student['student_id'] as String?;
     
     showDialog(
       context: context,
@@ -341,6 +356,9 @@ class _DashboardTabState extends State<DashboardTab> {
               const SizedBox(height: 20),
               Flexible(
                 child: SingleChildScrollView(
+                  padding: EdgeInsets.only(
+                    bottom: MediaQuery.of(context).padding.bottom + 100,
+                  ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -354,15 +372,50 @@ class _DashboardTabState extends State<DashboardTab> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              student['student_name']?.toString().isNotEmpty == true
-                                  ? student['student_name'] as String
-                                  : student['student_email'] as String? ?? '學生',
-                              style: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF1F2937),
-                              ),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    student['student_name']?.toString().isNotEmpty == true
+                                        ? student['student_name'] as String
+                                        : student['student_email'] as String? ?? '學生',
+                                    style: const TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                      color: Color(0xFF1F2937),
+                                    ),
+                                  ),
+                                ),
+                                // 登入狀態指示器
+                                Builder(
+                                  builder: (context) {
+                                    final studentId = student['student_id'] as String;
+                                    final isOnline = _studentsOnlineStatus[studentId] ?? false;
+                                    return Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Container(
+                                          width: 10,
+                                          height: 10,
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            color: isOnline ? Colors.green : Colors.grey,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          isOnline ? '登入中' : '已登出',
+                                          style: TextStyle(
+                                            fontSize: 14,
+                                            color: isOnline ? Colors.green.shade700 : Colors.grey[600],
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ],
+                                    );
+                                  },
+                                ),
+                              ],
                             ),
                             if (student['student_id_number']?.toString().isNotEmpty == true) ...[
                               const SizedBox(height: 8),
@@ -513,7 +566,7 @@ class _DashboardTabState extends State<DashboardTab> {
                           }).toList(),
                         ),
                       ],
-                      // 警告資訊
+                      // 警告資訊（僅在未標記為「已完成」時顯示）
                       if (hasAlert) ...[
                         const SizedBox(height: 20),
                         Container(
@@ -530,12 +583,14 @@ class _DashboardTabState extends State<DashboardTab> {
                                 children: [
                                   Icon(Icons.warning, color: Colors.red.shade700),
                                   const SizedBox(width: 8),
-                                  const Text(
-                                    '需要關注',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.red,
+                                  const Expanded(
+                                    child: Text(
+                                      '需要關注',
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.red,
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -557,6 +612,51 @@ class _DashboardTabState extends State<DashboardTab> {
                                     color: Colors.orange[700],
                                   ),
                                 ),
+                              const SizedBox(height: 12),
+                              SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton.icon(
+                                  onPressed: () async {
+                                    if (studentId == null) return;
+                                    
+                                    try {
+                                      await _supabaseService.markStudentAttentionResolved(studentId);
+                                      if (context.mounted) {
+                                        Navigator.of(context).pop();
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            content: Text('已標記為「已完成」'),
+                                            backgroundColor: Colors.green,
+                                          ),
+                                        );
+                                        // 重新載入數據
+                                        _loadStudentsProgress();
+                                      }
+                                    } catch (e) {
+                                      if (context.mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          SnackBar(
+                                            content: Text('標記失敗: $e'),
+                                            backgroundColor: Colors.red,
+                                          ),
+                                        );
+                                      }
+                                    }
+                                  },
+                                  icon: const Icon(Icons.check_circle, color: Colors.white),
+                                  label: const Text(
+                                    '新增完成',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.green,
+                                    padding: const EdgeInsets.symmetric(vertical: 12),
+                                  ),
+                                ),
+                              ),
                             ],
                           ),
                         ),
@@ -822,6 +922,41 @@ class _DashboardTabState extends State<DashboardTab> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(
+                              Icons.circle,
+                              size: 24,
+                              color: Colors.green,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              '${_studentsOnlineStatus.values.where((isOnline) => isOnline).length}',
+                              style: const TextStyle(
+                                fontSize: 32,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.green,
+                              ),
+                            ),
+                          ],
+                        ),
+                        Text(
+                          '登入中',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey[700],
+                          ),
+                        ),
+                      ],
+                    ),
+                    Container(
+                      width: 1,
+                      height: 40,
+                      color: Colors.grey[400],
+                    ),
+                    Column(
+                      children: [
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
                               Icons.check_circle,
                               size: 24,
                               color: Colors.green,
@@ -866,7 +1001,11 @@ class _DashboardTabState extends State<DashboardTab> {
                           ),
                         )
                       : ListView.builder(
-                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          padding: EdgeInsets.only(
+                            left: 20,
+                            right: 20,
+                            bottom: MediaQuery.of(context).padding.bottom + 100,
+                          ),
                           itemCount: _studentsProgress.length,
                           itemBuilder: (context, index) {
                             final student = _studentsProgress[index];
@@ -903,6 +1042,22 @@ class _DashboardTabState extends State<DashboardTab> {
                                 ),
                                 child: Row(
                                 children: [
+                                  // 登入狀態指示器（左側圓點）
+                                  Builder(
+                                    builder: (context) {
+                                      final studentId = student['student_id'] as String;
+                                      final isOnline = _studentsOnlineStatus[studentId] ?? false;
+                                      return Container(
+                                        width: 12,
+                                        height: 12,
+                                        margin: const EdgeInsets.only(right: 16),
+                                        decoration: BoxDecoration(
+                                          color: isOnline ? Colors.green : Colors.red,
+                                          shape: BoxShape.circle,
+                                        ),
+                                      );
+                                    },
+                                  ),
                                   Stack(
                                     children: [
                                       Container(
@@ -1100,7 +1255,7 @@ class _DashboardTabState extends State<DashboardTab> {
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
       ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+      floatingActionButtonLocation: _CustomFloatingActionButtonLocation(),
     );
   }
 
@@ -1349,5 +1504,24 @@ class _DashboardTabState extends State<DashboardTab> {
     );
 
     await _supabaseService.createBadge(badge);
+  }
+}
+
+class _CustomFloatingActionButtonLocation extends FloatingActionButtonLocation {
+  const _CustomFloatingActionButtonLocation();
+
+  @override
+  Offset getOffset(ScaffoldPrelayoutGeometry scaffoldGeometry) {
+    // 導航欄高度約 80px + 底部間距 16px + SafeArea + 額外安全間距
+    // 使用 minInsets.bottom 獲取底部安全區域
+    final double safeAreaBottom = scaffoldGeometry.minInsets.bottom;
+    final double navigationBarHeight = 80 + 16 + safeAreaBottom + 30;
+    final double bottom = scaffoldGeometry.scaffoldSize.height -
+        scaffoldGeometry.floatingActionButtonSize.height -
+        navigationBarHeight;
+    final double right = scaffoldGeometry.scaffoldSize.width -
+        scaffoldGeometry.floatingActionButtonSize.width -
+        16; // 右邊距
+    return Offset(right, bottom);
   }
 }

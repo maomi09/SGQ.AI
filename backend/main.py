@@ -200,6 +200,20 @@ class VerifyCodeRequest(BaseModel):
     email: str
     code: str
 
+class ResetPasswordRequest(BaseModel):
+    email: str
+    code: str
+    new_password: str
+
+class FeedbackRequest(BaseModel):
+    subject: str
+    content: str
+    app_version: Optional[str] = None
+
+class AdminResetPasswordRequest(BaseModel):
+    student_email: str
+    new_password: str
+
 
 @app.get("/")
 async def root():
@@ -266,26 +280,53 @@ Your scaffolding should support four dimensions:
 
         user_prompt = stage_prompts[request.stage].format(question=request.question)
 
-        response = openai_client.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.7,
-            max_tokens=500
-        )
-
-        return ChatGPTResponse(
-            response=response.choices[0].message.content
-        )
+        print(f"[ChatGPT Scaffolding] Stage: {request.stage}, Question: {request.question[:50]}...")
+        
+        try:
+            response = openai_client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.7,
+                max_tokens=500
+            )
+            
+            if not response.choices or len(response.choices) == 0:
+                print("[ChatGPT Scaffolding] Error: No choices in response")
+                raise HTTPException(status_code=500, detail="OpenAI API returned no choices")
+            
+            content = response.choices[0].message.content
+            if content is None:
+                print("[ChatGPT Scaffolding] Error: Response content is None")
+                raise HTTPException(status_code=500, detail="OpenAI API returned empty content")
+            
+            print(f"[ChatGPT Scaffolding] Success: Response length: {len(content)}")
+            return ChatGPTResponse(response=content)
+            
+        except Exception as openai_error:
+            print(f"[ChatGPT Scaffolding] OpenAI API Error: {openai_error}")
+            print(f"[ChatGPT Scaffolding] Error type: {type(openai_error).__name__}")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"OpenAI API error: {str(openai_error)}"
+            )
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"[ChatGPT Scaffolding] Unexpected error: {e}")
+        print(f"[ChatGPT Scaffolding] Error type: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
 @app.post("/api/chatgpt/additional", response_model=ChatGPTResponse)
 async def get_additional_response(request: AdditionalQuestionRequest):
     try:
+        print(f"[ChatGPT Additional] Stage: {request.stage}, User message: {request.user_message[:50]}...")
+        
         system_prompt = """You are an instructional AI tutor designed to support university EFL students in student-generated grammar question (SGQ) activities.
 
 Your role is to provide scaffolding, not answers.
@@ -323,18 +364,41 @@ Your scaffolding should support four dimensions:
             "content": request.user_message
         })
 
-        response = openai_client.chat.completions.create(
-            model="gpt-4",
-            messages=messages,
-            temperature=0.7,
-            max_tokens=500
-        )
-
-        return ChatGPTResponse(
-            response=response.choices[0].message.content
-        )
+        try:
+            response = openai_client.chat.completions.create(
+                model="gpt-4",
+                messages=messages,
+                temperature=0.7,
+                max_tokens=500
+            )
+            
+            if not response.choices or len(response.choices) == 0:
+                print("[ChatGPT Additional] Error: No choices in response")
+                raise HTTPException(status_code=500, detail="OpenAI API returned no choices")
+            
+            content = response.choices[0].message.content
+            if content is None:
+                print("[ChatGPT Additional] Error: Response content is None")
+                raise HTTPException(status_code=500, detail="OpenAI API returned empty content")
+            
+            print(f"[ChatGPT Additional] Success: Response length: {len(content)}")
+            return ChatGPTResponse(response=content)
+            
+        except Exception as openai_error:
+            print(f"[ChatGPT Additional] OpenAI API Error: {openai_error}")
+            print(f"[ChatGPT Additional] Error type: {type(openai_error).__name__}")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"OpenAI API error: {str(openai_error)}"
+            )
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"[ChatGPT Additional] Unexpected error: {e}")
+        print(f"[ChatGPT Additional] Error type: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
 @app.get("/api/health")
@@ -374,17 +438,12 @@ async def send_verification_code(request: SendVerificationCodeRequest):
         # 如果郵件發送失敗，仍然返回成功（開發模式）
         # 生產環境可以選擇返回錯誤或使用備用方案
     
-    # 開發模式下仍然返回驗證碼（方便測試）
-    # 生產環境應移除 code 欄位
-    environment = os.getenv("ENVIRONMENT", "development")  # 預設為 development
-    response_data = {
+    # 驗證碼只會發送到電子郵件，不會在 API 響應中返回
+    # 這是為了安全考慮，防止驗證碼洩露
+    return {
         "success": True,
         "message": "驗證碼已發送到您的電子郵件",
     }
-    # 開發模式下返回驗證碼（總是返回，方便測試）
-    response_data["code"] = code
-    
-    return response_data
 
 
 @app.post("/api/verify-code")
@@ -415,4 +474,276 @@ async def verify_code(request: VerifyCodeRequest):
         "success": True,
         "message": "驗證碼正確"
     }
+
+
+@app.post("/api/reset-password")
+async def reset_password(request: ResetPasswordRequest):
+    """重設密碼（需要先驗證驗證碼）"""
+    email = request.email.strip().lower()
+    code = request.code.strip()
+    new_password = request.new_password
+    
+    # 驗證密碼長度
+    if len(new_password) < 6:
+        raise HTTPException(status_code=400, detail="密碼長度至少需要6個字符")
+    
+    # 驗證驗證碼
+    if email not in verification_codes:
+        raise HTTPException(status_code=400, detail="驗證碼不存在或已過期")
+    
+    stored_data = verification_codes[email]
+    
+    # 檢查是否已驗證
+    if not stored_data.get('verified', False):
+        raise HTTPException(status_code=400, detail="請先驗證驗證碼")
+    
+    # 檢查是否過期
+    if time.time() > stored_data['expires_at']:
+        del verification_codes[email]
+        raise HTTPException(status_code=400, detail="驗證碼已過期，請重新發送")
+    
+    # 再次驗證驗證碼（確保安全）
+    if stored_data['code'] != code:
+        raise HTTPException(status_code=400, detail="驗證碼錯誤")
+    
+    try:
+        # 使用 Supabase Admin API 更新密碼
+        # 注意：這需要使用 service_role key，而不是 anon key
+        from supabase import create_client
+        
+        supabase_service_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        if not supabase_service_key:
+            # 如果沒有 service_role key，嘗試使用 Supabase Admin API
+            # 或者使用其他方式更新密碼
+            raise HTTPException(status_code=500, detail="服務器配置錯誤：缺少 SUPABASE_SERVICE_ROLE_KEY")
+        
+        # 創建使用 service_role 的 Supabase 客戶端
+        admin_supabase = create_client(supabase_url, supabase_service_key)
+        
+        # 查找用戶
+        users_response = admin_supabase.auth.admin.list_users()
+        user = None
+        for u in users_response.users:
+            if u.email == email:
+                user = u
+                break
+        
+        if not user:
+            raise HTTPException(status_code=404, detail="找不到該電子郵件地址的用戶")
+        
+        # 使用 Admin API 更新用戶密碼
+        admin_supabase.auth.admin.update_user_by_id(
+            user.id,
+            {"password": new_password}
+        )
+        
+        # 清除驗證碼（已使用）
+        del verification_codes[email]
+        
+        return {
+            "success": True,
+            "message": "密碼重設成功"
+        }
+    except Exception as e:
+        print(f"重設密碼錯誤: {e}")
+        raise HTTPException(status_code=500, detail=f"重設密碼失敗: {str(e)}")
+
+
+def send_feedback_email(subject: str, content: str, app_version: str = None):
+    """發送反饋郵件到 sgqaiapp@gmail.com"""
+    feedback_email = "sgqaiapp@gmail.com"
+    
+    # 從環境變數讀取郵件設定
+    smtp_enabled = os.getenv("SMTP_ENABLED", "false").lower() == "true"
+    sendgrid_enabled = os.getenv("SENDGRID_ENABLED", "false").lower() == "true"
+    
+    # 優先使用 SendGrid（如果啟用）
+    if sendgrid_enabled:
+        try:
+            send_feedback_with_sendgrid(feedback_email, subject, content, app_version)
+            return
+        except Exception as e:
+            print(f"SendGrid 發送失敗，嘗試 SMTP: {e}")
+    
+    # 使用 SMTP（如果啟用）
+    if smtp_enabled:
+        send_feedback_with_smtp(feedback_email, subject, content, app_version)
+    else:
+        # 如果都沒有啟用，拋出異常
+        raise Exception("郵件服務未配置。請設置 SMTP_ENABLED=true 或 SENDGRID_ENABLED=true")
+
+
+def send_feedback_with_smtp(to_email: str, subject: str, content: str, app_version: str = None):
+    """使用 SMTP 發送反饋郵件"""
+    smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_username = os.getenv("SMTP_USERNAME")
+    smtp_password = os.getenv("SMTP_PASSWORD")
+    smtp_from_email = os.getenv("SMTP_FROM_EMAIL", smtp_username)
+    
+    if not smtp_username or not smtp_password:
+        raise Exception("SMTP 設定不完整。請設置 SMTP_USERNAME 和 SMTP_PASSWORD")
+    
+    # 創建郵件
+    msg = MIMEMultipart('alternative')
+    msg['Subject'] = f'[應用程式回報] {subject}'
+    msg['From'] = smtp_from_email
+    msg['To'] = to_email
+    
+    # 郵件內容（HTML）
+    version_info = f"<p><strong>應用程式版本：</strong>{app_version or '未知'}</p>" if app_version else ""
+    
+    html_content = f"""
+    <html>
+      <body>
+        <h2>應用程式回報</h2>
+        <p><strong>主旨：</strong>{subject}</p>
+        {version_info}
+        <hr>
+        <h3>詳細內容：</h3>
+        <p style="white-space: pre-wrap;">{content}</p>
+      </body>
+    </html>
+    """
+    
+    # 純文字版本
+    text_content = f"""
+應用程式回報
+
+主旨：{subject}
+{'' if not app_version else f'應用程式版本：{app_version}'}
+
+詳細內容：
+{content}
+"""
+    
+    part1 = MIMEText(text_content, 'plain', 'utf-8')
+    part2 = MIMEText(html_content, 'html', 'utf-8')
+    
+    msg.attach(part1)
+    msg.attach(part2)
+    
+    # 發送郵件
+    try:
+        server = smtplib.SMTP(smtp_server, smtp_port)
+        server.starttls()
+        server.login(smtp_username, smtp_password)
+        server.send_message(msg)
+        server.quit()
+        print(f"反饋郵件已通過 SMTP 發送到 {to_email}")
+    except Exception as e:
+        raise Exception(f"SMTP 發送失敗: {str(e)}")
+
+
+def send_feedback_with_sendgrid(to_email: str, subject: str, content: str, app_version: str = None):
+    """使用 SendGrid 發送反饋郵件"""
+    try:
+        from sendgrid import SendGridAPIClient
+        from sendgrid.helpers.mail import Mail
+    except ImportError:
+        raise Exception("SendGrid 套件未安裝。請執行: pip install sendgrid")
+    
+    sendgrid_api_key = os.getenv("SENDGRID_API_KEY")
+    sendgrid_from_email = os.getenv("SENDGRID_FROM_EMAIL", "noreply@yourapp.com")
+    
+    if not sendgrid_api_key:
+        raise Exception("SENDGRID_API_KEY 未設置")
+    
+    version_info = f"<p><strong>應用程式版本：</strong>{app_version or '未知'}</p>" if app_version else ""
+    
+    message = Mail(
+        from_email=sendgrid_from_email,
+        to_emails=to_email,
+        subject=f'[應用程式回報] {subject}',
+        html_content=f"""
+        <h2>應用程式回報</h2>
+        <p><strong>主旨：</strong>{subject}</p>
+        {version_info}
+        <hr>
+        <h3>詳細內容：</h3>
+        <p style="white-space: pre-wrap;">{content}</p>
+        """
+    )
+    
+    try:
+        sg = SendGridAPIClient(sendgrid_api_key)
+        response = sg.send(message)
+        print(f"反饋郵件已通過 SendGrid 發送到 {to_email}, 狀態碼: {response.status_code}")
+    except Exception as e:
+        raise Exception(f"SendGrid 發送失敗: {str(e)}")
+
+
+@app.post("/api/send-feedback")
+async def send_feedback(request: FeedbackRequest):
+    """發送用戶反饋到 sgqaiapp@gmail.com"""
+    try:
+        send_feedback_email(
+            subject=request.subject,
+            content=request.content,
+            app_version=request.app_version
+        )
+        
+        return {
+            "success": True,
+            "message": "反饋已成功發送"
+        }
+    except Exception as e:
+        print(f"發送反饋錯誤: {e}")
+        raise HTTPException(status_code=500, detail=f"發送反饋失敗: {str(e)}")
+
+
+@app.post("/api/admin/reset-student-password")
+async def admin_reset_student_password(request: AdminResetPasswordRequest):
+    """老師重置學生密碼（需要 SUPABASE_SERVICE_ROLE_KEY）"""
+    student_email = request.student_email.strip().lower()
+    new_password = request.new_password
+    
+    # 驗證密碼長度
+    if len(new_password) < 6:
+        raise HTTPException(status_code=400, detail="密碼長度至少需要6個字符")
+    
+    try:
+        # 使用 Supabase Admin API 更新密碼
+        supabase_service_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        if not supabase_service_key:
+            raise HTTPException(status_code=500, detail="服務器配置錯誤：缺少 SUPABASE_SERVICE_ROLE_KEY")
+        
+        # 創建使用 service_role 的 Supabase 客戶端
+        admin_supabase = create_client(supabase_url, supabase_service_key)
+        
+        # 查找學生用戶
+        users_response = admin_supabase.auth.admin.list_users()
+        user = None
+        for u in users_response.users:
+            if u.email == student_email:
+                user = u
+                break
+        
+        if not user:
+            raise HTTPException(status_code=404, detail="找不到該電子郵件地址的學生")
+        
+        # 驗證該用戶是學生（可選，但建議檢查）
+        try:
+            user_data = admin_supabase.table('users').select('role').eq('id', user.id).single().execute()
+            if user_data.data['role'] != 'student':
+                raise HTTPException(status_code=403, detail="該帳號不是學生帳號")
+        except Exception as e:
+            print(f"Warning: Could not verify user role: {e}")
+            # 如果無法驗證，仍然繼續（可能是 RLS 問題）
+        
+        # 使用 Admin API 更新學生密碼
+        admin_supabase.auth.admin.update_user_by_id(
+            user.id,
+            {"password": new_password}
+        )
+        
+        return {
+            "success": True,
+            "message": "學生密碼已重置"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"重置學生密碼錯誤: {e}")
+        raise HTTPException(status_code=500, detail=f"重置密碼失敗: {str(e)}")
 

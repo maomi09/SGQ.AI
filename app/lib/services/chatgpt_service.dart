@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-import 'dart:io' show Platform;
-import 'package:flutter/foundation.dart' show kIsWeb;
+import '../config/app_config.dart';
 
 class ChatGPTService {
   final String backendUrl;
@@ -11,20 +10,23 @@ class ChatGPTService {
     print('ChatGPTService 初始化，後端 URL: $backendUrl');
   }
 
-  // 根據平台自動選擇正確的後端 URL
+  // 獲取後端 URL（統一使用 AppConfig 中的配置）
   static String _getBackendUrl() {
-    if (kIsWeb) {
-      return 'http://localhost:8000';
-    } else if (Platform.isAndroid) {
-      // Android 模擬器需要使用 10.0.2.2 來訪問主機的 localhost
-      // 實體設備需要使用電腦的 IP 地址（例如：192.168.1.100）
-      return 'http://10.0.2.2:8000';
-    } else if (Platform.isIOS) {
-      // iOS 模擬器可以使用 localhost
-      return 'http://localhost:8000';
-    } else {
-      return 'http://127.0.0.1:8000';
-    }
+    // 生產環境：直接使用 AppConfig 中的 AWS URL
+    return AppConfig.backendApiUrl;
+    
+    // 如果需要本地開發，可以取消下面的註釋並註釋掉上面的 return
+    // if (kIsWeb) {
+    //   return 'http://localhost:8000';
+    // } else if (Platform.isAndroid) {
+    //   // Android 模擬器需要使用 10.0.2.2 來訪問主機的 localhost
+    //   return 'http://10.0.2.2:8000';
+    // } else if (Platform.isIOS) {
+    //   // iOS 模擬器可以使用 localhost
+    //   return 'http://localhost:8000';
+    // } else {
+    //   return 'http://127.0.0.1:8000';
+    // }
   }
 
   Future<String> getScaffoldingResponse(String question, int stage) async {

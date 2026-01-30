@@ -146,20 +146,11 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
       );
     } else if (mounted) {
-      // 檢查是否是開發模式的驗證碼訊息
-      final errorMsg = authProvider.errorMessage ?? '發送驗證碼失敗';
-      final isDevMode = errorMsg.contains('驗證碼已發送（開發模式）');
-      
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(errorMsg),
-          backgroundColor: isDevMode ? Colors.green : Colors.red,
-          duration: Duration(seconds: isDevMode ? 10 : 5),
-          action: isDevMode ? SnackBarAction(
-            label: '確定',
-            textColor: Colors.white,
-            onPressed: () {},
-          ) : null,
+          content: Text(authProvider.errorMessage ?? '發送驗證碼失敗'),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 5),
         ),
       );
       authProvider.clearError();

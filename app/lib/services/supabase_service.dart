@@ -1,32 +1,34 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'dart:io' show Platform;
-import 'package:flutter/foundation.dart' show kIsWeb;
 import '../models/user_model.dart';
 import '../models/grammar_topic_model.dart';
 import '../models/question_model.dart';
 import '../models/badge_model.dart';
 import '../models/grammar_key_point_model.dart';
 import '../models/reminder_model.dart';
+import '../config/app_config.dart';
 
 class SupabaseService {
   final SupabaseClient _client = Supabase.instance.client;
   
-  // 獲取後端 API URL（根據平台自動選擇）
+  // 獲取後端 API URL（統一使用 AppConfig 中的配置）
   String get _backendUrl {
-    if (kIsWeb) {
-      return 'http://localhost:8000';
-    } else if (Platform.isAndroid) {
-      // Android 模擬器需要使用 10.0.2.2 來訪問主機的 localhost
-      // 實體設備需要使用電腦的 IP 地址（例如：192.168.1.100）
-      return 'http://10.0.2.2:8000';
-    } else if (Platform.isIOS) {
-      // iOS 模擬器可以使用 localhost
-      return 'http://localhost:8000';
-    } else {
-      return 'http://127.0.0.1:8000';
-    }
+    // 生產環境：直接使用 AppConfig 中的 AWS URL
+    return AppConfig.backendApiUrl;
+    
+    // 如果需要本地開發，可以取消下面的註釋並註釋掉上面的 return
+    // if (kIsWeb) {
+    //   return 'http://localhost:8000';
+    // } else if (Platform.isAndroid) {
+    //   // Android 模擬器需要使用 10.0.2.2 來訪問主機的 localhost
+    //   return 'http://10.0.2.2:8000';
+    // } else if (Platform.isIOS) {
+    //   // iOS 模擬器可以使用 localhost
+    //   return 'http://localhost:8000';
+    // } else {
+    //   return 'http://127.0.0.1:8000';
+    // }
   }
 
   // 檢查信箱是否已被使用
@@ -232,15 +234,9 @@ class SupabaseService {
         
         // 檢查是否成功
         if (data['success'] == true) {
-          // 如果後端返回了驗證碼（開發模式），通過特殊異常返回給上層顯示
-          if (data['code'] != null && data['code'].toString().isNotEmpty) {
-            final code = data['code'].toString();
-            print('驗證碼（開發模式）: $code');
-            // 通過特殊異常返回驗證碼給上層顯示
-            throw Exception('VERIFICATION_CODE_SENT:$code');
-          }
-          // 後端 API 成功發送（生產模式，不返回驗證碼）
+          // 後端 API 成功發送驗證碼到電子郵件
           print('驗證碼已通過後端 API 發送到電子郵件');
+          // 注意：驗證碼只會發送到電子郵件，不會在應用程式中顯示
           return; // 成功，直接返回
         } else {
           throw Exception('後端 API 返回失敗：${data['message'] ?? '未知錯誤'}');
@@ -256,13 +252,6 @@ class SupabaseService {
       }
     } catch (e) {
       final errorStr = e.toString();
-      // 如果是開發模式的驗證碼，特殊處理
-      if (errorStr.contains('VERIFICATION_CODE_SENT:')) {
-        final code = errorStr.split('VERIFICATION_CODE_SENT:')[1];
-        print('驗證碼（開發模式）: $code');
-        // 重新拋出，讓上層處理顯示
-        throw Exception('驗證碼已發送（開發模式）。驗證碼：$code\n請查看後端終端或此訊息。');
-      }
       
       // 檢查是否是連接錯誤（後端未運行）
       final isConnectionError = errorStr.contains('Connection refused') ||
@@ -389,6 +378,208 @@ class SupabaseService {
     await _client.auth.updateUser(
       UserAttributes(password: newPassword),
     );
+  }
+
+  // 發送忘記密碼驗證碼（優先使用後端 API，失敗時回退到 Supabase OTP）
+  Future<void> sendForgotPasswordOTP(String email) async {
+    final cleanedEmail = email.trim().toLowerCase();
+    
+    // 基本 Email 格式驗證
+    final emailRegex = RegExp(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$');
+    if (!emailRegex.hasMatch(cleanedEmail)) {
+      throw Exception('Invalid email format');
+    }
+    
+    // 優先嘗試使用後端 API（發送數字驗證碼）
+    try {
+      final backendUrl = _backendUrl;
+      print('嘗試連接到後端 API: $backendUrl/api/send-verification-code');
+      final response = await http.post(
+        Uri.parse('$backendUrl/api/send-verification-code'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'email': cleanedEmail}),
+      ).timeout(const Duration(seconds: 10));
+      
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        print('Backend API 響應: $data');
+        
+        if (data['success'] == true) {
+          // 後端 API 成功發送驗證碼到電子郵件
+          print('驗證碼已通過後端 API 發送到電子郵件');
+          // 注意：驗證碼只會發送到電子郵件，不會在應用程式中顯示
+          return; // 成功，直接返回
+        } else {
+          throw Exception('後端 API 返回失敗：${data['message'] ?? '未知錯誤'}');
+        }
+      } else {
+        // 處理非 200 狀態碼
+        try {
+          final errorData = jsonDecode(response.body);
+          throw Exception('後端 API 錯誤：${errorData['detail'] ?? errorData['message'] ?? 'HTTP ${response.statusCode}'}');
+        } catch (_) {
+          throw Exception('後端 API 錯誤：HTTP ${response.statusCode}');
+        }
+      }
+    } catch (e) {
+      final errorStr = e.toString();
+      
+      // 檢查是否是連接錯誤（後端未運行）
+      final isConnectionError = errorStr.contains('Connection refused') ||
+          errorStr.contains('SocketException') ||
+          errorStr.contains('Failed host lookup') ||
+          errorStr.contains('Network is unreachable');
+      
+      if (isConnectionError) {
+        print('Backend API 未運行，嘗試使用 Supabase OTP: $e');
+      } else {
+        print('Backend API failed, falling back to Supabase OTP: $e');
+      }
+      // 後端 API 失敗，回退到 Supabase OTP
+    }
+    
+    // 回退到 Supabase OTP（如果後端 API 不可用）
+    // 注意：Supabase 的 signInWithOtp 默認發送 Magic Link，不是數字驗證碼
+    // 需要在 Supabase Dashboard 中配置才能發送數字驗證碼
+    try {
+      await _client.auth.signInWithOtp(
+        email: cleanedEmail,
+        shouldCreateUser: false, // 不創建新用戶，僅發送 OTP
+      );
+      print('Supabase OTP 發送成功（注意：可能是 Magic Link 而不是數字驗證碼）');
+      return;
+    } catch (e) {
+      print('Supabase OTP 失敗: $e');
+      final errorStr = e.toString();
+      if (errorStr.contains('otp_disabled') || 
+          errorStr.contains('Email rate limit') ||
+          errorStr.contains('rate_limit')) {
+        throw Exception(
+          'Supabase OTP 狀態：失敗\n\n'
+          '可能的原因：\n'
+          '1. Supabase OTP 功能未啟用\n'
+          '2. 請求過於頻繁\n'
+          '3. 請確保後端 API 正在運行以使用數字驗證碼功能\n\n'
+          '錯誤詳情：$e'
+        );
+      }
+      rethrow;
+    }
+  }
+
+  // 驗證忘記密碼 OTP（優先使用後端 API，失敗時回退到 Supabase OTP）
+  Future<bool> verifyForgotPasswordOTP(String email, String token) async {
+    final cleanedEmail = email.trim().toLowerCase();
+    
+    // 優先嘗試使用後端 API
+    try {
+      final backendUrl = _backendUrl;
+      print('嘗試連接到後端 API: $backendUrl/api/verify-code');
+      final response = await http.post(
+        Uri.parse('$backendUrl/api/verify-code'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'email': cleanedEmail,
+          'code': token,
+        }),
+      ).timeout(const Duration(seconds: 10));
+      
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['success'] == true) {
+          // 後端 API 驗證成功
+          // 現在我們需要通過 Supabase 登入用戶才能更新密碼
+          // 方案：發送一個 Supabase OTP，然後立即驗證它來登入用戶
+          try {
+            // 發送 Supabase OTP
+            await _client.auth.signInWithOtp(
+              email: cleanedEmail,
+              shouldCreateUser: false,
+            );
+            
+            // 等待一下讓 OTP 發送完成
+            await Future.delayed(const Duration(seconds: 2));
+            
+            // 注意：這裡我們無法立即驗證，因為 Supabase OTP 和後端驗證碼不同
+            // 所以我們返回 true，表示後端驗證成功
+            // 更新密碼時會使用後端 API，不需要 Supabase 登入
+            print('後端驗證成功，可以通過後端 API 更新密碼');
+            return true;
+          } catch (e) {
+            print('發送 Supabase OTP 失敗（這不影響後端驗證）: $e');
+            // 即使 Supabase OTP 失敗，後端驗證仍然成功
+            // 更新密碼時會使用後端 API
+            return true;
+          }
+        }
+      } else {
+        final errorData = jsonDecode(response.body);
+        throw Exception(errorData['detail'] ?? '驗證失敗');
+      }
+    } catch (e) {
+      print('Backend API verification failed, falling back to Supabase OTP: $e');
+      // 後端 API 失敗，回退到 Supabase OTP
+    }
+    
+    // 回退到 Supabase OTP（如果後端 API 不可用）
+    try {
+      // 驗證 OTP（這會自動登入用戶）
+      final response = await _client.auth.verifyOTP(
+        email: cleanedEmail,
+        token: token,
+        type: OtpType.email,
+      );
+      
+      // 如果驗證成功，返回 true（用戶已自動登入）
+      return response.user != null;
+    } catch (e) {
+      print('Verify forgot password OTP error: $e');
+      rethrow;
+    }
+  }
+
+  // 更新密碼（用於忘記密碼流程，使用後端 API）
+  Future<void> updatePassword(String email, String verificationCode, String newPassword) async {
+    final cleanedEmail = email.trim().toLowerCase();
+    
+    // 優先嘗試使用後端 API
+    try {
+      final backendUrl = _backendUrl;
+      print('嘗試連接到後端 API: $backendUrl/api/reset-password');
+      final response = await http.post(
+        Uri.parse('$backendUrl/api/reset-password'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'email': cleanedEmail,
+          'code': verificationCode,
+          'new_password': newPassword,
+        }),
+      ).timeout(const Duration(seconds: 10));
+      
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['success'] == true) {
+          print('密碼已通過後端 API 更新');
+          return; // 成功
+        } else {
+          throw Exception('後端 API 返回失敗：${data['message'] ?? '未知錯誤'}');
+        }
+      } else {
+        final errorData = jsonDecode(response.body);
+        throw Exception(errorData['detail'] ?? '更新密碼失敗');
+      }
+    } catch (e) {
+      print('Backend API reset password failed: $e');
+      // 如果後端 API 失敗，嘗試使用 Supabase（需要用戶已登入）
+      // 但這在忘記密碼流程中可能不可用
+      if (_client.auth.currentUser != null) {
+        await _client.auth.updateUser(
+          UserAttributes(password: newPassword),
+        );
+      } else {
+        rethrow;
+      }
+    }
   }
 
   User? getCurrentUser() {
@@ -1307,6 +1498,300 @@ class SupabaseService {
     }).length;
   }
 
+  // Session Management - 創建新的 session
+  Future<String?> createSession(String studentId) async {
+    try {
+      final response = await _client
+          .from('user_sessions')
+          .insert({
+            'student_id': studentId,
+            'start_time': DateTime.now().toIso8601String(),
+          })
+          .select()
+          .single();
+      
+      return response['id'] as String?;
+    } catch (e) {
+      print('Error creating session: $e');
+      return null;
+    }
+  }
+
+  // Session Management - 結束 session
+  Future<void> endSession(String sessionId) async {
+    try {
+      await _client
+          .from('user_sessions')
+          .update({
+            'end_time': DateTime.now().toIso8601String(),
+          })
+          .eq('id', sessionId);
+    } catch (e) {
+      print('Error ending session: $e');
+    }
+  }
+
+  // Session Management - 獲取當前活動的 session（未結束的）
+  Future<String?> getActiveSessionId(String studentId) async {
+    try {
+      final response = await _client
+          .from('user_sessions')
+          .select('id')
+          .eq('student_id', studentId)
+          .isFilter('end_time', null)
+          .order('start_time', ascending: false)
+          .limit(1)
+          .maybeSingle();
+      
+      if (response != null) {
+        return response['id'] as String?;
+      }
+      return null;
+    } catch (e) {
+      print('Error getting active session: $e');
+      return null;
+    }
+  }
+
+  // Session Management - 結束所有未結束的 session（用於登出或應用程式關閉時）
+  Future<void> endAllActiveSessions(String studentId) async {
+    try {
+      await _client
+          .from('user_sessions')
+          .update({
+            'end_time': DateTime.now().toIso8601String(),
+          })
+          .eq('student_id', studentId)
+          .isFilter('end_time', null);
+    } catch (e) {
+      print('Error ending all active sessions: $e');
+    }
+  }
+
+  // Session Management - 檢查學生是否在線（是否有活動的 session）
+  Future<bool> isStudentOnline(String studentId) async {
+    try {
+      final response = await _client
+          .from('user_sessions')
+          .select('id, start_time')
+          .eq('student_id', studentId)
+          .isFilter('end_time', null)
+          .order('start_time', ascending: false)
+          .limit(1)
+          .maybeSingle();
+      
+      if (response != null) {
+        // 檢查 session 是否在最近 5 分鐘內有活動（避免顯示長時間未活動的 session）
+        final startTime = DateTime.parse(response['start_time'] as String);
+        final now = DateTime.now();
+        final difference = now.difference(startTime);
+        
+        // 如果 session 在最近 30 分鐘內開始，認為學生在線
+        // 這個時間可以根據需要調整
+        return difference.inMinutes < 30;
+      }
+      return false;
+    } catch (e) {
+      print('Error checking student online status: $e');
+      return false;
+    }
+  }
+
+  // Session Management - 批量檢查多個學生的登入狀態
+  Future<Map<String, bool>> getStudentsOnlineStatus(List<String> studentIds) async {
+    final Map<String, bool> statusMap = {};
+    
+    try {
+      // 獲取所有未結束的 session
+      final response = await _client
+          .from('user_sessions')
+          .select('student_id, start_time')
+          .inFilter('student_id', studentIds)
+          .isFilter('end_time', null);
+      
+      final now = DateTime.now();
+      final activeSessions = <String, DateTime>{};
+      
+      // 處理響應（確保是 List）
+      final sessions = (response as List).cast<Map<String, dynamic>>();
+      
+      for (var session in sessions) {
+        final studentId = session['student_id'] as String;
+        final startTimeStr = session['start_time'] as String;
+        final startTime = DateTime.parse(startTimeStr);
+        
+        // 如果這個學生已經有更近期的 session，保留更近期的
+        if (!activeSessions.containsKey(studentId) || 
+            startTime.isAfter(activeSessions[studentId]!)) {
+          activeSessions[studentId] = startTime;
+        }
+      }
+      
+      // 檢查每個學生的狀態
+      for (var studentId in studentIds) {
+        if (activeSessions.containsKey(studentId)) {
+          final startTime = activeSessions[studentId]!;
+          final difference = now.difference(startTime);
+          // 如果 session 在最近 30 分鐘內開始，認為學生在線
+          statusMap[studentId] = difference.inMinutes < 30;
+        } else {
+          statusMap[studentId] = false;
+        }
+      }
+    } catch (e) {
+      print('Error getting students online status: $e');
+      // 如果出錯，所有學生都標記為離線
+      for (var studentId in studentIds) {
+        statusMap[studentId] = false;
+      }
+    }
+    
+    return statusMap;
+  }
+
+  // Student Management - Reset student password (admin function)
+  Future<void> resetStudentPassword(String studentEmail, String newPassword) async {
+    final cleanedEmail = studentEmail.trim().toLowerCase();
+    
+    // 驗證密碼長度
+    if (newPassword.length < 6) {
+      throw Exception('密碼長度至少需要6個字符');
+    }
+    
+    // 使用後端 API 重置密碼（需要 service_role key）
+    try {
+      final backendUrl = _backendUrl;
+      print('嘗試連接到後端 API: $backendUrl/api/admin/reset-student-password');
+      final response = await http.post(
+        Uri.parse('$backendUrl/api/admin/reset-student-password'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'student_email': cleanedEmail,
+          'new_password': newPassword,
+        }),
+      ).timeout(const Duration(seconds: 10));
+      
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['success'] == true) {
+          print('學生密碼已通過後端 API 重置');
+          return; // 成功
+        } else {
+          throw Exception('後端 API 返回失敗：${data['message'] ?? '未知錯誤'}');
+        }
+      } else {
+        final errorData = jsonDecode(response.body);
+        throw Exception(errorData['detail'] ?? '重置密碼失敗');
+      }
+    } catch (e) {
+      print('Backend API reset student password failed: $e');
+      rethrow;
+    }
+  }
+
+  // Student Management - Get all students (simple list)
+  Future<List<Map<String, dynamic>>> getAllStudents() async {
+    try {
+      final response = await _client
+          .from('users')
+          .select('id, name, email, student_id, created_at')
+          .eq('role', 'student')
+          .order('created_at', ascending: false);
+      
+      return (response as List).map((student) => {
+        'id': student['id'],
+        'name': student['name'],
+        'email': student['email'],
+        'student_id': student['student_id'],
+        'created_at': student['created_at'],
+      }).toList();
+    } catch (e) {
+      print('Error getting all students: $e');
+      rethrow;
+    }
+  }
+
+  // Student Management - Update student
+  Future<void> updateStudent(
+    String studentId, {
+    String? name,
+    String? email,
+    String? studentIdNumber,
+  }) async {
+    try {
+      final updates = <String, dynamic>{};
+      
+      if (name != null) {
+        updates['name'] = name;
+      }
+      if (email != null) {
+        updates['email'] = email;
+      }
+      if (studentIdNumber != null) {
+        updates['student_id'] = studentIdNumber;
+      }
+
+      if (updates.isEmpty) {
+        return;
+      }
+
+      // 更新 users 表
+      await _client
+          .from('users')
+          .update(updates)
+          .eq('id', studentId);
+
+      // 如果更新了 email，也需要更新 auth.users
+      if (email != null) {
+        // 注意：更新 auth.users 需要管理員權限或使用服務角色
+        // 這裡我們只更新 users 表，email 的實際更改可能需要通過 Supabase Admin API
+        print('Note: Email update in auth.users may require admin privileges');
+      }
+    } catch (e) {
+      print('Error updating student: $e');
+      rethrow;
+    }
+  }
+
+  // Student Management - Delete student
+  Future<void> deleteStudent(String studentId) async {
+    try {
+      // 先刪除相關資料（題目、徽章等）
+      await _client
+          .from('questions')
+          .delete()
+          .eq('student_id', studentId);
+      
+      await _client
+          .from('badges')
+          .delete()
+          .eq('student_id', studentId);
+
+      await _client
+          .from('user_sessions')
+          .delete()
+          .eq('student_id', studentId);
+
+      await _client
+          .from('chat_messages')
+          .delete()
+          .eq('student_id', studentId);
+
+      // 最後刪除 users 表中的記錄
+      await _client
+          .from('users')
+          .delete()
+          .eq('id', studentId);
+
+      // 注意：刪除 auth.users 中的記錄需要管理員權限
+      // 這裡我們只刪除 users 表，auth.users 的記錄可能需要通過 Supabase Admin API 刪除
+      print('Note: Auth user deletion may require admin privileges');
+    } catch (e) {
+      print('Error deleting student: $e');
+      rethrow;
+    }
+  }
+
   // Chat Messages
   Future<void> saveChatMessage({
     required String questionId,
@@ -1382,6 +1867,73 @@ class SupabaseService {
     } catch (e) {
       print('Error deleting chat messages: $e');
       rethrow;
+    }
+  }
+
+  // Student Attention Management - 標記學生為「已完成」（解除關注狀態）
+  Future<void> markStudentAttentionResolved(String studentId, {String? reason}) async {
+    try {
+      final currentUser = _client.auth.currentUser;
+      if (currentUser == null) {
+        throw Exception('User not authenticated');
+      }
+
+      await _client
+          .from('student_attention_resolved')
+          .upsert({
+            'student_id': studentId,
+            'marked_by': currentUser.id,
+            'reason': reason,
+            'marked_at': DateTime.now().toIso8601String(),
+          });
+    } catch (e) {
+      print('Error marking student attention as resolved: $e');
+      rethrow;
+    }
+  }
+
+  // Student Attention Management - 取消標記（恢復關注狀態）
+  Future<void> unmarkStudentAttentionResolved(String studentId) async {
+    try {
+      await _client
+          .from('student_attention_resolved')
+          .delete()
+          .eq('student_id', studentId);
+    } catch (e) {
+      print('Error unmarking student attention resolved: $e');
+      rethrow;
+    }
+  }
+
+  // Student Attention Management - 檢查學生是否已被標記為「已完成」
+  Future<bool> isStudentAttentionResolved(String studentId) async {
+    try {
+      final response = await _client
+          .from('student_attention_resolved')
+          .select('id')
+          .eq('student_id', studentId)
+          .limit(1);
+      
+      return (response as List).isNotEmpty;
+    } catch (e) {
+      print('Error checking if student attention is resolved: $e');
+      return false;
+    }
+  }
+
+  // Student Attention Management - 獲取所有已標記為「已完成」的學生 ID
+  Future<Set<String>> getResolvedStudentIds() async {
+    try {
+      final response = await _client
+          .from('student_attention_resolved')
+          .select('student_id');
+      
+      return (response as List)
+          .map((record) => record['student_id'] as String)
+          .toSet();
+    } catch (e) {
+      print('Error getting resolved student IDs: $e');
+      return {};
     }
   }
 }

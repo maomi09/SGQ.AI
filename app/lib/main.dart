@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'config/app_config.dart';
 import 'providers/auth_provider.dart';
 import 'providers/grammar_topic_provider.dart';
 import 'providers/question_provider.dart';
@@ -16,9 +17,11 @@ import 'screens/teacher/teacher_main_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Supabase URL 和 anon key 可以安全地放在客戶端
+  // 這是 Supabase 的設計：anon key 是公開的，安全性通過 Row Level Security (RLS) 來保護
   await Supabase.initialize(
-    url: 'https://iqmhqdkpultzyzurolwv.supabase.co', // 請在 config/app_config.dart 中設定
-    anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlxbWhxZGtwdWx0enl6dXJvbHd2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU4MDc1NzMsImV4cCI6MjA4MTM4MzU3M30.OfBqLiwFQLjyuJwkgU1Vu1eedjrzkeVsSznQAnR9B9Q', // 請在 config/app_config.dart 中設定
+    url: AppConfig.supabaseUrl,
+    anonKey: AppConfig.supabaseAnonKey,
     authOptions: const FlutterAuthClientOptions(
       authFlowType: AuthFlowType.pkce,
     ),

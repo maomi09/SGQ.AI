@@ -8,6 +8,7 @@ class AuthProvider with ChangeNotifier {
   UserModel? _currentUser;
   bool _isLoading = false;
   String? _errorMessage;
+  String? _currentSessionId; // 當前活動的 session ID
 
   UserModel? get currentUser => _currentUser;
   bool get isLoading => _isLoading;
@@ -181,6 +182,20 @@ class AuthProvider with ChangeNotifier {
             } catch (e) {
               print('Warning: Failed to sync email: $e');
             }
+          }
+        }
+        
+        // 如果是學生，創建 session 記錄使用時間
+        if (_currentUser != null && _currentUser!.role == 'student') {
+          try {
+            // 先結束任何未結束的 session
+            await _supabaseService.endAllActiveSessions(_currentUser!.id);
+            // 創建新的 session
+            _currentSessionId = await _supabaseService.createSession(_currentUser!.id);
+            print('Session created for student: ${_currentUser!.id}, session ID: $_currentSessionId');
+          } catch (e) {
+            print('Error creating session: $e');
+            // 不影響登入流程，繼續執行
           }
         }
         
@@ -391,14 +406,32 @@ class AuthProvider with ChangeNotifier {
     notifyListeners();
     
     try {
+      // 如果是學生，結束當前的 session
+      if (_currentUser != null && _currentUser!.role == 'student') {
+        try {
+          if (_currentSessionId != null) {
+            await _supabaseService.endSession(_currentSessionId!);
+          } else {
+            // 如果沒有 session ID，結束所有活動的 session
+            await _supabaseService.endAllActiveSessions(_currentUser!.id);
+          }
+          print('Session ended for student: ${_currentUser!.id}');
+        } catch (e) {
+          print('Error ending session: $e');
+          // 不影響登出流程，繼續執行
+        }
+      }
+      
       await _supabaseService.signOut();
       _currentUser = null;
+      _currentSessionId = null;
       _isLoading = false;
       notifyListeners();
     } catch (e) {
       print('Sign out error: $e');
       // 即使出錯也清除本地狀態
       _currentUser = null;
+      _currentSessionId = null;
       _isLoading = false;
       notifyListeners();
     }
@@ -437,11 +470,6 @@ class AuthProvider with ChangeNotifier {
               '2. 或在 Supabase Dashboard 中啟用 OTP 註冊功能\n'
               '   Authentication > Providers > Email > Enable sign ups';
         }
-      } else if (errorStr.contains('驗證碼已發送（開發模式）')) {
-        // 開發模式的驗證碼，視為成功
-        _errorMessage = e.toString().replaceFirst('Exception: ', '');
-        notifyListeners();
-        return true;
       } else {
         _errorMessage = '發送驗證碼失敗：${e.toString()}';
       }
@@ -476,8 +504,13 @@ class AuthProvider with ChangeNotifier {
       _currentUser = null;
       
       final errorStr = e.toString();
-      if (errorStr.contains('Invalid token') || errorStr.contains('invalid_token')) {
-        _errorMessage = '驗證碼錯誤或已過期';
+      // 優先檢查後端 API 返回的具體錯誤訊息
+      if (errorStr.contains('驗證碼錯誤')) {
+        _errorMessage = '驗證碼錯誤';
+      } else if (errorStr.contains('驗證碼已過期') || errorStr.contains('驗證碼不存在或已過期')) {
+        _errorMessage = '驗證碼已過期，請重新發送';
+      } else if (errorStr.contains('Invalid token') || errorStr.contains('invalid_token')) {
+        _errorMessage = '驗證碼錯誤';
       } else if (errorStr.contains('Token expired') || errorStr.contains('expired')) {
         _errorMessage = '驗證碼已過期，請重新發送';
       } else if (errorStr.contains('User not found') || errorStr.contains('not found')) {
@@ -549,6 +582,106 @@ class AuthProvider with ChangeNotifier {
     }
   }
 
+  // 發送忘記密碼驗證碼
+  Future<bool> sendForgotPasswordOTP(String email) async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      await _supabaseService.sendForgotPasswordOTP(email);
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      print('Send forgot password OTP error: $e');
+      _isLoading = false;
+      
+      final errorStr = e.toString();
+      if (errorStr.contains('email_address_invalid') || errorStr.contains('Invalid email')) {
+        _errorMessage = '電子郵件格式無效';
+      } else if (errorStr.contains('User not found') || errorStr.contains('not found')) {
+        _errorMessage = '找不到此電子郵件地址的帳號';
+      } else if (errorStr.contains('Email rate limit') || errorStr.contains('rate_limit')) {
+        _errorMessage = '請求過於頻繁，請稍後再試';
+      } else {
+        _errorMessage = '發送驗證碼失敗：${e.toString()}';
+      }
+      
+      notifyListeners();
+      return false;
+    }
+  }
+
+  // 驗證忘記密碼 OTP
+  Future<bool> verifyForgotPasswordOTP(String email, String token) async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      final verified = await _supabaseService.verifyForgotPasswordOTP(email, token);
+      _isLoading = false;
+      notifyListeners();
+      return verified;
+    } catch (e) {
+      print('Verify forgot password OTP error: $e');
+      _isLoading = false;
+      
+      final errorStr = e.toString();
+      // 優先檢查後端 API 返回的具體錯誤訊息
+      if (errorStr.contains('驗證碼錯誤')) {
+        _errorMessage = '驗證碼錯誤';
+      } else if (errorStr.contains('驗證碼已過期') || errorStr.contains('驗證碼不存在或已過期')) {
+        _errorMessage = '驗證碼已過期，請重新發送';
+      } else if (errorStr.contains('Invalid token') || errorStr.contains('invalid_token')) {
+        _errorMessage = '驗證碼錯誤';
+      } else if (errorStr.contains('Token expired') || errorStr.contains('expired')) {
+        _errorMessage = '驗證碼已過期，請重新發送';
+      } else if (errorStr.contains('User not found') || errorStr.contains('not found')) {
+        _errorMessage = '驗證碼無效，請重新發送';
+      } else {
+        _errorMessage = '驗證失敗：${e.toString()}';
+      }
+      
+      notifyListeners();
+      return false;
+    }
+  }
+
+  // 更新密碼（用於忘記密碼流程，OTP 驗證後使用）
+  Future<bool> updatePasswordAfterOTP(String email, String verificationCode, String newPassword) async {
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      await _supabaseService.updatePassword(email, verificationCode, newPassword);
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      print('Update password after OTP error: $e');
+      _isLoading = false;
+      
+      final errorStr = e.toString();
+      if (errorStr.contains('Password') || errorStr.contains('password')) {
+        _errorMessage = '密碼不符合要求（至少6個字符）';
+      } else if (errorStr.contains('驗證碼錯誤')) {
+        _errorMessage = '驗證碼錯誤，請重新驗證';
+      } else if (errorStr.contains('驗證碼已過期') || errorStr.contains('驗證碼不存在或已過期')) {
+        _errorMessage = '驗證碼已過期，請重新發送驗證碼';
+      } else if (errorStr.contains('驗證碼') || errorStr.contains('code')) {
+        _errorMessage = '驗證碼錯誤，請重新驗證';
+      } else {
+        _errorMessage = '更新密碼失敗：${e.toString()}';
+      }
+      
+      notifyListeners();
+      return false;
+    }
+  }
+
   Future<void> checkAuth() async {
     _isLoading = true;
     notifyListeners();
@@ -557,6 +690,25 @@ class AuthProvider with ChangeNotifier {
       final user = _supabaseService.getCurrentUser();
       if (user != null) {
         _currentUser = await _supabaseService.getUser(user.id);
+        
+        // 如果是學生，檢查並創建 session
+        if (_currentUser != null && _currentUser!.role == 'student') {
+          try {
+            // 檢查是否有活動的 session
+            final activeSessionId = await _supabaseService.getActiveSessionId(_currentUser!.id);
+            if (activeSessionId == null) {
+              // 如果沒有活動的 session，創建新的
+              _currentSessionId = await _supabaseService.createSession(_currentUser!.id);
+              print('Session created for student: ${_currentUser!.id}, session ID: $_currentSessionId');
+            } else {
+              _currentSessionId = activeSessionId;
+              print('Active session found for student: ${_currentUser!.id}, session ID: $_currentSessionId');
+            }
+          } catch (e) {
+            print('Error managing session in checkAuth: $e');
+            // 不影響認證流程，繼續執行
+          }
+        }
         
         // 如果 users 表中沒有記錄，從 auth metadata 創建用戶
         if (_currentUser == null) {
@@ -600,6 +752,7 @@ class AuthProvider with ChangeNotifier {
       } else {
         // 如果沒有用戶，確保清除狀態
         _currentUser = null;
+        _currentSessionId = null;
       }
     } catch (e) {
       print('checkAuth error: $e');
