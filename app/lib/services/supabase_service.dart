@@ -172,7 +172,7 @@ class SupabaseService {
     try {
       await _client.auth.signInWithOAuth(
         OAuthProvider.google,
-        redirectTo: 'com.example.app://',
+        redirectTo: AppConfig.getDeepLinkUrl('login-callback'),
         authScreenLaunchMode: LaunchMode.externalApplication,
       );
       return true;
@@ -204,7 +204,7 @@ class SupabaseService {
     
     await _client.auth.resetPasswordForEmail(
       cleanedEmail,
-      redirectTo: 'com.example.app://reset-password',
+      redirectTo: AppConfig.getDeepLinkUrl('reset-password'),
     );
   }
 

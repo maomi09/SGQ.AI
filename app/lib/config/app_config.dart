@@ -16,5 +16,21 @@ class AppConfig {
   
   // 本地開發環境 URL（如需本地開發，請將上面的 backendApiUrl 改為此值）
   // static const String backendApiUrl = 'http://localhost:8000';
+
+  // Bundle ID 設定（用於深度連結和 OAuth 回調）
+  // 重要：如果更改此值，請同時更新以下檔案：
+  // 1. iOS: app/ios/Runner/Info.plist (CFBundleURLSchemes)
+  // 2. iOS: app/ios/Runner.xcodeproj/project.pbxproj (PRODUCT_BUNDLE_IDENTIFIER)
+  // 3. Android: app/android/app/src/main/AndroidManifest.xml (android:scheme)
+  // 4. Android: app/android/app/build.gradle.kts (applicationId)
+  // 5. Android: app/android/app/src/main/kotlin/.../MainActivity.kt (package name)
+  // 6. Supabase Dashboard: Authentication > URL Configuration > Redirect URLs
+  // 7. Google Cloud Console: OAuth 客戶端設定
+  static const String bundleId = 'sgqtest';
+
+  // 生成深度連結 URL 的輔助方法
+  static String getDeepLinkUrl(String path) {
+    return '$bundleId://$path';
+  }
 }
 

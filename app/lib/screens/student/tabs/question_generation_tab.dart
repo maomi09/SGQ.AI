@@ -1098,12 +1098,21 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
                 ),
                 // 表單內容
                 Expanded(
-                  child: SingleChildScrollView(
-                    controller: scrollController,
-                    padding: const EdgeInsets.all(20),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      // 獲取鍵盤高度
+                      final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
+                      return SingleChildScrollView(
+                        controller: scrollController,
+                        padding: EdgeInsets.only(
+                          left: 20,
+                          right: 20,
+                          top: 20,
+                          bottom: 20 + keyboardHeight, // 動態添加鍵盤高度的 padding
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
                         Container(
                           padding: const EdgeInsets.all(4),
                           decoration: BoxDecoration(
@@ -1235,12 +1244,14 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
                       const SizedBox(height: 20),
                     ],
                   ),
+                      );
+                    },
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
-      ),
       ),
     );
   }
