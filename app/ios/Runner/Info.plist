@@ -28,10 +28,10 @@
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
-			<string>sgqtest</string>
+			<string>com.sgqai.app</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>sgqtest</string>
+				<string>com.sgqai.app</string>
 			</array>
 		</dict>
 	</array>

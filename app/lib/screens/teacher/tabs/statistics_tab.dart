@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../providers/auth_provider.dart';
@@ -47,13 +48,22 @@ class _StatisticsTabState extends State<StatisticsTab> {
         
         weeklyLogins[studentId] = stats['weekly_login_frequency'] as int;
         totalQuestions += stats['total_questions'] as int;
-        totalUsageTime += stats['total_usage_time'] as int;
+        
+        // 確保 total_usage_time 是非負數
+        final usageTime = stats['total_usage_time'] as int;
+        totalUsageTime += usageTime > 0 ? usageTime : 0;
+        
         // 安全地轉換 average_session_duration（可能是 int 或 double）
         final avgDuration = stats['average_session_duration'];
-        totalSessionDuration += avgDuration is double 
+        final avgDurationValue = avgDuration is double 
             ? avgDuration 
             : (avgDuration as num).toDouble();
-        sessionCount++;
+        
+        // 確保平均時長是非負數
+        if (avgDurationValue > 0) {
+          totalSessionDuration += avgDurationValue;
+          sessionCount++;
+        }
       }
 
       setState(() {
@@ -293,14 +303,14 @@ class _StatisticsTabState extends State<StatisticsTab> {
                                   _buildStatCard(
                                     icon: Icons.timer,
                                     label: '總使用時長',
-                                    value: '${_overallStats!['total_usage_time']} 分鐘',
+                                    value: '${math.max(0, _overallStats!['total_usage_time'] as int)} 分鐘',
                                     color: Colors.orange,
                                   ),
                                   const SizedBox(height: 12),
                                   _buildStatCard(
                                     icon: Icons.access_time,
                                     label: '平均單次使用時長',
-                                    value: '${_overallStats!['average_session_duration'].toStringAsFixed(1)} 分鐘',
+                                    value: '${math.max(0.0, (_overallStats!['average_session_duration'] as num).toDouble()).toStringAsFixed(1)} 分鐘',
                                     color: Colors.purple,
                                   ),
                                 ],
@@ -461,13 +471,13 @@ class _StatisticsTabState extends State<StatisticsTab> {
                                           ],
                                         ),
                                         const SizedBox(height: 16),
-                                        _buildStatRow('每周登入頻率', '${stats['weekly_login_frequency']} 次'),
+                                        _buildStatRow('每周登入頻率', '${math.max(0, stats['weekly_login_frequency'] as int)} 次'),
                                         const SizedBox(height: 8),
-                                        _buildStatRow('單次使用時長', '${stats['average_session_duration'].toStringAsFixed(1)} 分鐘'),
+                                        _buildStatRow('單次使用時長', '${math.max(0.0, (stats['average_session_duration'] as num).toDouble()).toStringAsFixed(1)} 分鐘'),
                                         const SizedBox(height: 8),
-                                        _buildStatRow('練習題數', '${stats['total_questions']}'),
+                                        _buildStatRow('練習題數', '${math.max(0, stats['total_questions'] as int)}'),
                                         const SizedBox(height: 8),
-                                        _buildStatRow('全期間使用總時長', '${stats['total_usage_time']} 分鐘'),
+                                        _buildStatRow('全期間使用總時長', '${math.max(0, stats['total_usage_time'] as int)} 分鐘'),
                                       ],
                                     ),
                                     ),

@@ -8,28 +8,42 @@ import string
 import hashlib
 import time
 import smtplib
+import urllib.request
+import urllib.parse
+import json
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from openai import OpenAI
 
-# 載入環境變數
-load_dotenv()
+# 載入環境變數（override=True 確保 .env 檔案優先於系統環境變數）
+load_dotenv(override=True)
 
-app = FastAPI()
+app = FastAPI(
+    title="SGQ API Server",
+    description="SGQ 後端 API 服務",
+    version="1.0.0",
+)
 
+# CORS 設定
+# 生產環境建議限制允許的來源
+allowed_origins = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # 從環境變數讀取設定，如果沒有則使用預設值（從 Flutter app 中取得）
+# 注意：使用 override=True 後，.env 檔案會覆蓋系統環境變數
 supabase_url = os.getenv("SUPABASE_URL") or "https://iqmhqdkpultzyzurolwv.supabase.co"
 supabase_key = os.getenv("SUPABASE_KEY") or "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlxbWhxZGtwdWx0enl6dXJvbHd2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU4MDc1NzMsImV4cCI6MjA4MTM4MzU3M30.OfBqLiwFQLjyuJwkgU1Vu1eedjrzkeVsSznQAnR9B9Q"
+
+# 輸出使用的 Supabase URL（用於除錯）
+print(f"[後端設定] Supabase URL: {supabase_url}")
 
 supabase: Client = create_client(
     supabase_url,
@@ -213,6 +227,10 @@ class FeedbackRequest(BaseModel):
 class AdminResetPasswordRequest(BaseModel):
     student_email: str
     new_password: str
+
+class AdminUpdateStudentEmailRequest(BaseModel):
+    student_id: str
+    new_email: str
 
 
 @app.get("/")
@@ -518,24 +536,110 @@ async def reset_password(request: ResetPasswordRequest):
             raise HTTPException(status_code=500, detail="服務器配置錯誤：缺少 SUPABASE_SERVICE_ROLE_KEY")
         
         # 創建使用 service_role 的 Supabase 客戶端
-        admin_supabase = create_client(supabase_url, supabase_service_key)
+        try:
+            admin_supabase = create_client(supabase_url, supabase_service_key)
+        except Exception as conn_error:
+            print(f"連接 Supabase 失敗: {conn_error}")
+            raise HTTPException(
+                status_code=500, 
+                detail="無法連接到 Supabase 服務，請檢查網路連接和 Supabase URL 設定"
+            )
         
-        # 查找用戶
-        users_response = admin_supabase.auth.admin.list_users()
-        user = None
-        for u in users_response.users:
-            if u.email == email:
-                user = u
-                break
-        
-        if not user:
-            raise HTTPException(status_code=404, detail="找不到該電子郵件地址的用戶")
-        
-        # 使用 Admin API 更新用戶密碼
-        admin_supabase.auth.admin.update_user_by_id(
-            user.id,
-            {"password": new_password}
-        )
+        # 使用 Supabase Admin API 查找和更新用戶
+        # 注意：由於網路連接問題，我們使用 Python SDK 並加上更好的錯誤處理
+        try:
+            # 先測試網路連接和 DNS 解析
+            print(f"測試 Supabase 連接: {supabase_url}")
+            print(f"使用 Service Role Key: {'已設定' if supabase_service_key else '未設定'}")
+            
+            # 嘗試使用 Python SDK 查找用戶
+            # 注意：list_users() 可能會返回大量用戶，但這是目前最可靠的方法
+            print(f"嘗試查找用戶: {email}")
+            
+            # 設定超時時間（如果 SDK 支援）
+            try:
+                users_response = admin_supabase.auth.admin.list_users()
+                
+                # 處理不同的返回格式
+                # 新版本的 Supabase SDK 可能直接返回 list，舊版本返回有 users 屬性的對象
+                if isinstance(users_response, list):
+                    users_list = users_response
+                    print(f"成功取得用戶列表，共 {len(users_list)} 個用戶")
+                elif hasattr(users_response, 'users'):
+                    users_list = users_response.users
+                    print(f"成功取得用戶列表，共 {len(users_list)} 個用戶")
+                else:
+                    # 嘗試轉換為 list
+                    users_list = list(users_response) if users_response else []
+                    print(f"成功取得用戶列表，共 {len(users_list)} 個用戶")
+            except Exception as list_error:
+                error_msg = str(list_error)
+                print(f"查詢用戶列表失敗: {list_error}")
+                print(f"錯誤類型: {type(list_error).__name__}")
+                
+                # 檢查是否是 DNS 解析錯誤
+                if "getaddrinfo failed" in error_msg or "11001" in error_msg:
+                    raise HTTPException(
+                        status_code=500,
+                        detail="無法連接到 Supabase，請檢查：\n"
+                               "1. 網路連接是否正常\n"
+                               "2. DNS 設定是否正確\n"
+                               "3. 防火牆是否阻擋連接\n"
+                               "4. 是否使用代理（需要設定代理）"
+                    )
+                else:
+                    raise
+            
+            user = None
+            for u in users_list:
+                # 處理不同的用戶對象格式
+                user_email = u.email if hasattr(u, 'email') else u.get('email') if isinstance(u, dict) else None
+                user_id = u.id if hasattr(u, 'id') else u.get('id') if isinstance(u, dict) else None
+                
+                if user_email and user_email.lower() == email.lower():
+                    user = u
+                    print(f"找到用戶: {user_id}")
+                    break
+            
+            if not user:
+                raise HTTPException(status_code=404, detail="找不到該電子郵件地址的用戶")
+            
+            # 使用 Admin API 更新用戶密碼
+            # 取得用戶 ID（處理不同的對象格式）
+            user_id = user.id if hasattr(user, 'id') else user.get('id') if isinstance(user, dict) else None
+            if not user_id:
+                raise HTTPException(status_code=500, detail="無法取得用戶 ID")
+            
+            print(f"嘗試更新用戶密碼: {user_id}")
+            try:
+                admin_supabase.auth.admin.update_user_by_id(
+                    user_id,
+                    {"password": new_password}
+                )
+                print("密碼更新成功")
+            except Exception as update_error:
+                error_msg = str(update_error)
+                print(f"更新密碼失敗: {update_error}")
+                print(f"錯誤類型: {type(update_error).__name__}")
+                if "getaddrinfo failed" in error_msg or "11001" in error_msg:
+                    raise HTTPException(
+                        status_code=500,
+                        detail="無法連接到 Supabase 更新密碼，請檢查網路連接"
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=500,
+                        detail="更新密碼失敗，請稍後再試"
+                    )
+        except HTTPException:
+            raise
+        except Exception as update_error:
+            print(f"更新密碼失敗: {update_error}")
+            print(f"錯誤類型: {type(update_error).__name__}")
+            raise HTTPException(
+                status_code=500,
+                detail="更新密碼失敗，請稍後再試"
+            )
         
         # 清除驗證碼（已使用）
         del verification_codes[email]
@@ -544,9 +648,26 @@ async def reset_password(request: ResetPasswordRequest):
             "success": True,
             "message": "密碼重設成功"
         }
+    except HTTPException:
+        raise
     except Exception as e:
+        error_msg = str(e)
         print(f"重設密碼錯誤: {e}")
-        raise HTTPException(status_code=500, detail=f"重設密碼失敗: {str(e)}")
+        print(f"錯誤類型: {type(e).__name__}")
+        
+        # 檢查是否是網路連接錯誤
+        if "getaddrinfo failed" in error_msg or "11001" in error_msg:
+            raise HTTPException(
+                status_code=500,
+                detail="網路連接失敗，請檢查網路設定和 Supabase URL"
+            )
+        elif "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+            raise HTTPException(
+                status_code=500,
+                detail="連接超時，請稍後再試"
+            )
+        else:
+            raise HTTPException(status_code=500, detail="重設密碼失敗，請稍後再試")
 
 
 def send_feedback_email(subject: str, content: str, app_version: str = None):
@@ -713,18 +834,34 @@ async def admin_reset_student_password(request: AdminResetPasswordRequest):
         
         # 查找學生用戶
         users_response = admin_supabase.auth.admin.list_users()
+        
+        # 處理不同的返回格式
+        if isinstance(users_response, list):
+            users_list = users_response
+        elif hasattr(users_response, 'users'):
+            users_list = users_response.users
+        else:
+            users_list = list(users_response) if users_response else []
+        
         user = None
-        for u in users_response.users:
-            if u.email == student_email:
+        for u in users_list:
+            # 處理不同的用戶對象格式
+            user_email = u.email if hasattr(u, 'email') else u.get('email') if isinstance(u, dict) else None
+            if user_email and user_email.lower() == student_email.lower():
                 user = u
                 break
         
         if not user:
             raise HTTPException(status_code=404, detail="找不到該電子郵件地址的學生")
         
+        # 取得用戶 ID（處理不同的對象格式）
+        user_id = user.id if hasattr(user, 'id') else user.get('id') if isinstance(user, dict) else None
+        if not user_id:
+            raise HTTPException(status_code=500, detail="無法取得用戶 ID")
+        
         # 驗證該用戶是學生（可選，但建議檢查）
         try:
-            user_data = admin_supabase.table('users').select('role').eq('id', user.id).single().execute()
+            user_data = admin_supabase.table('users').select('role').eq('id', user_id).single().execute()
             if user_data.data['role'] != 'student':
                 raise HTTPException(status_code=403, detail="該帳號不是學生帳號")
         except Exception as e:
@@ -733,7 +870,7 @@ async def admin_reset_student_password(request: AdminResetPasswordRequest):
         
         # 使用 Admin API 更新學生密碼
         admin_supabase.auth.admin.update_user_by_id(
-            user.id,
+            user_id,
             {"password": new_password}
         )
         
@@ -746,4 +883,75 @@ async def admin_reset_student_password(request: AdminResetPasswordRequest):
     except Exception as e:
         print(f"重置學生密碼錯誤: {e}")
         raise HTTPException(status_code=500, detail=f"重置密碼失敗: {str(e)}")
+
+
+@app.post("/api/admin/update-student-email")
+async def admin_update_student_email(request: AdminUpdateStudentEmailRequest):
+    """老師更新學生電子郵件（需要 SUPABASE_SERVICE_ROLE_KEY）"""
+    student_id = request.student_id.strip()
+    new_email = request.new_email.strip().lower()
+    
+    # 驗證 email 格式
+    import re
+    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    if not re.match(email_pattern, new_email):
+        raise HTTPException(status_code=400, detail="電子郵件格式不正確")
+    
+    try:
+        # 使用 Supabase Admin API 更新 email
+        supabase_service_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        if not supabase_service_key:
+            raise HTTPException(status_code=500, detail="服務器配置錯誤：缺少 SUPABASE_SERVICE_ROLE_KEY")
+        
+        # 創建使用 service_role 的 Supabase 客戶端
+        admin_supabase = create_client(supabase_url, supabase_service_key)
+        
+        # 驗證該用戶是學生
+        try:
+            user_data = admin_supabase.table('users').select('role, email').eq('id', student_id).single().execute()
+            if user_data.data['role'] != 'student':
+                raise HTTPException(status_code=403, detail="該帳號不是學生帳號")
+            old_email = user_data.data.get('email', '')
+        except Exception as e:
+            print(f"Warning: Could not verify user role: {e}")
+            raise HTTPException(status_code=404, detail="找不到該學生帳號")
+        
+        # 檢查新 email 是否已被其他用戶使用
+        try:
+            existing_user = admin_supabase.table('users').select('id').eq('email', new_email).neq('id', student_id).execute()
+            if existing_user.data and len(existing_user.data) > 0:
+                raise HTTPException(status_code=400, detail="該電子郵件已被其他用戶使用")
+        except HTTPException:
+            raise
+        except Exception as e:
+            print(f"Warning: Could not check email availability: {e}")
+        
+        # 使用 Admin API 更新 auth.users 的 email
+        admin_supabase.auth.admin.update_user_by_id(
+            student_id,
+            {"email": new_email}
+        )
+        
+        # 同時更新 users 表的 email（確保同步）
+        admin_supabase.table('users').update({
+            'email': new_email,
+            'updated_at': 'now()'
+        }).eq('id', student_id).execute()
+        
+        # 記錄更新操作（包含時間戳）
+        from datetime import datetime
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        print(f"[{timestamp}] 成功更新學生 email: {old_email} -> {new_email} (學生 ID: {student_id})")
+        
+        return {
+            "success": True,
+            "message": "學生電子郵件已更新",
+            "old_email": old_email,
+            "new_email": new_email
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"更新學生電子郵件錯誤: {e}")
+        raise HTTPException(status_code=500, detail=f"更新電子郵件失敗: {str(e)}")
 

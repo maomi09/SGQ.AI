@@ -66,30 +66,59 @@ class _StudentManagementScreenState extends State<StudentManagementScreen> {
 
     if (confirmed != true) return;
 
-    // 顯示載入指示器
+    // 顯示載入指示器，保存載入對話框的 context
     if (!mounted) return;
+    BuildContext? loadingDialogContext;
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => const Center(
-        child: CircularProgressIndicator(),
-      ),
+      builder: (dialogContext) {
+        loadingDialogContext = dialogContext;
+        return const Center(
+          child: CircularProgressIndicator(),
+        );
+      },
     );
 
     try {
       await _supabaseService.deleteStudent(studentId);
+      
+      // 檢查 widget 是否還存在
+      if (!mounted) return;
+      
+      // 關閉載入指示器（使用載入對話框的 context，使用 rootNavigator）
+      if (loadingDialogContext != null) {
+        Navigator.of(loadingDialogContext!, rootNavigator: true).pop();
+      }
+      
+      // 顯示成功訊息
       if (mounted) {
-        Navigator.pop(context); // 關閉載入指示器
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('學生帳號已刪除')),
+          const SnackBar(
+            content: Text('學生帳號已刪除'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
         );
         _loadStudents(); // 重新載入列表
       }
     } catch (e) {
+      // 檢查 widget 是否還存在
+      if (!mounted) return;
+      
+      // 關閉載入指示器（使用載入對話框的 context，使用 rootNavigator）
+      if (loadingDialogContext != null) {
+        Navigator.of(loadingDialogContext!, rootNavigator: true).pop();
+      }
+      
+      // 顯示錯誤訊息
       if (mounted) {
-        Navigator.pop(context); // 關閉載入指示器
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('刪除失敗: $e')),
+          SnackBar(
+            content: Text('刪除失敗: ${e.toString()}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
         );
       }
     }
@@ -166,16 +195,24 @@ class _StudentManagementScreenState extends State<StudentManagementScreen> {
 
               final newPassword = passwordController.text;
 
-              Navigator.pop(context); // 關閉對話框
+              // 先關閉密碼輸入對話框
+              final dialogContext = context;
+              Navigator.pop(dialogContext);
 
-              // 顯示載入指示器
+              // 檢查 widget 是否還存在
               if (!mounted) return;
+
+              // 顯示載入指示器，保存載入對話框的 context
+              BuildContext? loadingDialogContext;
               showDialog(
                 context: context,
                 barrierDismissible: false,
-                builder: (context) => const Center(
-                  child: CircularProgressIndicator(),
-                ),
+                builder: (dialogContext) {
+                  loadingDialogContext = dialogContext;
+                  return const Center(
+                    child: CircularProgressIndicator(),
+                  );
+                },
               );
 
               try {
@@ -183,17 +220,42 @@ class _StudentManagementScreenState extends State<StudentManagementScreen> {
                   student['email'] as String,
                   newPassword,
                 );
+                
+                // 檢查 widget 是否還存在
+                if (!mounted) return;
+                
+                // 關閉載入指示器（使用載入對話框的 context，使用 rootNavigator）
+                if (loadingDialogContext != null) {
+                  Navigator.of(loadingDialogContext!, rootNavigator: true).pop();
+                }
+                
+                // 顯示成功訊息
                 if (mounted) {
-                  Navigator.pop(context); // 關閉載入指示器
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('學生密碼已重置')),
+                    const SnackBar(
+                      content: Text('學生密碼已重置'),
+                      backgroundColor: Colors.green,
+                      duration: Duration(seconds: 2),
+                    ),
                   );
                 }
               } catch (e) {
+                // 檢查 widget 是否還存在
+                if (!mounted) return;
+                
+                // 關閉載入指示器（使用載入對話框的 context，使用 rootNavigator）
+                if (loadingDialogContext != null) {
+                  Navigator.of(loadingDialogContext!, rootNavigator: true).pop();
+                }
+                
+                // 顯示錯誤訊息
                 if (mounted) {
-                  Navigator.pop(context); // 關閉載入指示器
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('重置失敗: $e')),
+                    SnackBar(
+                      content: Text('重置失敗: ${e.toString()}'),
+                      backgroundColor: Colors.red,
+                      duration: const Duration(seconds: 3),
+                    ),
                   );
                 }
               }
@@ -270,16 +332,24 @@ class _StudentManagementScreenState extends State<StudentManagementScreen> {
                 return;
               }
 
-              Navigator.pop(context); // 關閉對話框
+              // 先關閉編輯對話框
+              final dialogContext = context;
+              Navigator.pop(dialogContext);
 
-              // 顯示載入指示器
+              // 檢查 widget 是否還存在
               if (!mounted) return;
+
+              // 顯示載入指示器，保存載入對話框的 context
+              BuildContext? loadingDialogContext;
               showDialog(
                 context: context,
                 barrierDismissible: false,
-                builder: (context) => const Center(
-                  child: CircularProgressIndicator(),
-                ),
+                builder: (dialogContext) {
+                  loadingDialogContext = dialogContext;
+                  return const Center(
+                    child: CircularProgressIndicator(),
+                  );
+                },
               );
 
               try {
@@ -289,18 +359,43 @@ class _StudentManagementScreenState extends State<StudentManagementScreen> {
                   email: newEmail,
                   studentIdNumber: newStudentId,
                 );
+                
+                // 檢查 widget 是否還存在
+                if (!mounted) return;
+                
+                // 關閉載入指示器（使用載入對話框的 context）
+                if (loadingDialogContext != null && Navigator.of(loadingDialogContext!, rootNavigator: true).canPop()) {
+                  Navigator.of(loadingDialogContext!, rootNavigator: true).pop();
+                }
+                
+                // 顯示成功訊息
                 if (mounted) {
-                  Navigator.pop(context); // 關閉載入指示器
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('學生資料已更新')),
+                    const SnackBar(
+                      content: Text('學生資料已更新'),
+                      backgroundColor: Colors.green,
+                      duration: Duration(seconds: 2),
+                    ),
                   );
                   _loadStudents(); // 重新載入列表
                 }
               } catch (e) {
+                // 檢查 widget 是否還存在
+                if (!mounted) return;
+                
+                // 關閉載入指示器（使用載入對話框的 context）
+                if (loadingDialogContext != null && Navigator.of(loadingDialogContext!, rootNavigator: true).canPop()) {
+                  Navigator.of(loadingDialogContext!, rootNavigator: true).pop();
+                }
+                
+                // 顯示錯誤訊息
                 if (mounted) {
-                  Navigator.pop(context); // 關閉載入指示器
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('更新失敗: $e')),
+                    SnackBar(
+                      content: Text('更新失敗: ${e.toString()}'),
+                      backgroundColor: Colors.red,
+                      duration: const Duration(seconds: 3),
+                    ),
                   );
                 }
               }

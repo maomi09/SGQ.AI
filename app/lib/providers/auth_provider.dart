@@ -62,22 +62,34 @@ class AuthProvider with ChangeNotifier {
             // 即使創建失敗，也使用從 auth metadata 創建的用戶對象
           }
         } else {
-          // 如果從 users 表獲取成功，但 email 為空或與 auth 不一致，則更新
+          // 如果從 users 表獲取成功，優先使用 users 表的 email（因為它是最新的）
+          // 如果 users 表的 email 為空，才使用 auth email
           final authUser = response.user!;
           final authEmail = authUser.email ?? email;
-          if (_currentUser!.email.isEmpty || _currentUser!.email != authEmail) {
+          final usersTableEmail = _currentUser!.email;
+          
+          // 優先使用 users 表的 email，因為它可能比 auth email 更新（例如剛修改過 email）
+          // 只有在 users 表的 email 為空時，才使用 auth email
+          final finalEmail = usersTableEmail.isNotEmpty ? usersTableEmail : authEmail;
+          
+          // 只有在 email 真的不同時才更新（避免不必要的更新）
+          if (_currentUser!.email != finalEmail) {
             _currentUser = UserModel(
               id: _currentUser!.id,
-              email: authEmail,
+              email: finalEmail,
               name: _currentUser!.name,
               role: _currentUser!.role,
               studentId: _currentUser!.studentId,
             );
-            // 同步更新 users 表
-            try {
-              await _supabaseService.updateUserEmail(authEmail);
-            } catch (e) {
-              print('Warning: Failed to sync email: $e');
+            
+            // 只有在 users 表的 email 為空且 auth email 不為空時，才同步更新 users 表
+            // 不要用 auth email 覆蓋 users 表的 email（因為 users 表的 email 可能更新）
+            if (usersTableEmail.isEmpty && authEmail.isNotEmpty) {
+              try {
+                await _supabaseService.updateUserEmail(authEmail);
+              } catch (e) {
+                print('Warning: Failed to sync email: $e');
+              }
             }
           }
         }
@@ -106,7 +118,7 @@ class AuthProvider with ChangeNotifier {
       } else if (errorStr.contains('Email rate limit')) {
         _errorMessage = '註冊失敗：請求過於頻繁，請稍後再試';
       } else {
-        _errorMessage = '註冊失敗：${e.toString()}';
+        _errorMessage = '註冊失敗，請稍後再試';
       }
       
       notifyListeners();
@@ -286,18 +298,35 @@ class AuthProvider with ChangeNotifier {
     try {
       await _supabaseService.updateUserEmail(newEmail);
       
-      // 重新獲取用戶資料
+      // 等待一下確保更新完成
+      await Future.delayed(const Duration(milliseconds: 500));
+      
+      // 重新獲取用戶資料（直接從 users 表獲取，確保獲取到最新的 email）
       final user = _supabaseService.getCurrentUser();
       if (user != null) {
+        // 先從 users 表獲取最新的用戶資料
         _currentUser = await _supabaseService.getUser(user.id);
         if (_currentUser != null) {
+          // 使用新 email 更新本地狀態（即使 auth email 還沒更新，users 表的 email 已經更新了）
           _currentUser = UserModel(
             id: _currentUser!.id,
-            email: newEmail,
+            email: newEmail.toLowerCase().trim(), // 使用新 email
             name: _currentUser!.name,
             role: _currentUser!.role,
             studentId: _currentUser!.studentId,
           );
+          print('Updated local user email to: ${_currentUser!.email}');
+        } else {
+          // 如果無法從 users 表獲取，至少更新本地狀態
+          if (_currentUser != null) {
+            _currentUser = UserModel(
+              id: _currentUser!.id,
+              email: newEmail.toLowerCase().trim(),
+              name: _currentUser!.name,
+              role: _currentUser!.role,
+              studentId: _currentUser!.studentId,
+            );
+          }
         }
       }
       
@@ -318,7 +347,7 @@ class AuthProvider with ChangeNotifier {
       } else if (errorStr.contains('User not authenticated')) {
         _errorMessage = '用戶未登入，請重新登入';
       } else {
-        _errorMessage = '更新失敗：${e.toString()}';
+        _errorMessage = '更新失敗，請稍後再試';
       }
       
       notifyListeners();
@@ -458,20 +487,9 @@ class AuthProvider with ChangeNotifier {
       } else if (errorStr.contains('otp_disabled') || 
                  errorStr.contains('Signups not allowed') ||
                  errorStr.contains('無法發送驗證碼')) {
-        // 檢查是否是詳細的錯誤訊息（包含解決方案）
-        if (errorStr.contains('解決方案') || errorStr.contains('啟動後端服務')) {
-          _errorMessage = e.toString().replaceFirst('Exception: ', '');
-        } else {
-          _errorMessage = '無法發送驗證碼。\n\n'
-              '解決方案：\n'
-              '1. 啟動後端服務：\n'
-              '   cd backend\n'
-              '   uvicorn main:app --reload\n\n'
-              '2. 或在 Supabase Dashboard 中啟用 OTP 註冊功能\n'
-              '   Authentication > Providers > Email > Enable sign ups';
-        }
+        _errorMessage = '無法發送驗證碼，請稍後再試';
       } else {
-        _errorMessage = '發送驗證碼失敗：${e.toString()}';
+        _errorMessage = '發送驗證碼失敗，請稍後再試';
       }
       
       notifyListeners();
@@ -482,16 +500,29 @@ class AuthProvider with ChangeNotifier {
   Future<bool> verifySignupOTP(String email, String token) async {
     _isLoading = true;
     _errorMessage = null;
+    
+    // 保存當前用戶狀態（如果是修改信箱場景，需要保持登入狀態）
+    final wasLoggedIn = _currentUser != null;
+    final savedUser = _currentUser;
+    
     notifyListeners();
 
     try {
-      // 確保當前沒有登入狀態
-      _currentUser = null;
+      // 只有在註冊場景（未登入）時才清除用戶狀態
+      if (!wasLoggedIn) {
+        _currentUser = null;
+      }
       
-      final verified = await _supabaseService.verifySignupOTP(email, token);
+      // 如果之前已登入（修改信箱場景），傳遞 keepLoggedIn=true 以保持登入狀態
+      final verified = await _supabaseService.verifySignupOTP(email, token, keepLoggedIn: wasLoggedIn);
       
-      // 確保清除任何可能的登入狀態
-      _currentUser = null;
+      // 如果驗證成功且之前已登入，恢復用戶狀態
+      if (verified && wasLoggedIn && savedUser != null) {
+        _currentUser = savedUser;
+      } else if (!wasLoggedIn) {
+        // 註冊場景：確保清除登入狀態
+        _currentUser = null;
+      }
       
       _isLoading = false;
       notifyListeners();
@@ -500,8 +531,12 @@ class AuthProvider with ChangeNotifier {
       print('Verify signup OTP error: $e');
       _isLoading = false;
       
-      // 確保清除狀態
-      _currentUser = null;
+      // 如果之前已登入，恢復用戶狀態（驗證失敗不應該影響已登入的用戶）
+      if (wasLoggedIn && savedUser != null) {
+        _currentUser = savedUser;
+      } else {
+        _currentUser = null;
+      }
       
       final errorStr = e.toString();
       // 優先檢查後端 API 返回的具體錯誤訊息
@@ -516,7 +551,7 @@ class AuthProvider with ChangeNotifier {
       } else if (errorStr.contains('User not found') || errorStr.contains('not found')) {
         _errorMessage = '驗證碼無效，請重新發送';
       } else {
-        _errorMessage = '驗證失敗：${e.toString()}';
+        _errorMessage = '驗證失敗，請稍後再試';
       }
       
       notifyListeners();
@@ -546,7 +581,7 @@ class AuthProvider with ChangeNotifier {
       } else if (errorStr.contains('Email rate limit') || errorStr.contains('rate_limit')) {
         _errorMessage = '請求過於頻繁，請稍後再試';
       } else {
-        _errorMessage = '發送重設密碼郵件失敗：${e.toString()}';
+        _errorMessage = '發送重設密碼郵件失敗，請稍後再試';
       }
       
       notifyListeners();
@@ -574,7 +609,7 @@ class AuthProvider with ChangeNotifier {
       } else if (errorStr.contains('Invalid token') || errorStr.contains('invalid_token')) {
         _errorMessage = '重設密碼連結無效或已過期';
       } else {
-        _errorMessage = '重設密碼失敗：${e.toString()}';
+        _errorMessage = '重設密碼失敗，請稍後再試';
       }
       
       notifyListeners();
@@ -605,7 +640,7 @@ class AuthProvider with ChangeNotifier {
       } else if (errorStr.contains('Email rate limit') || errorStr.contains('rate_limit')) {
         _errorMessage = '請求過於頻繁，請稍後再試';
       } else {
-        _errorMessage = '發送驗證碼失敗：${e.toString()}';
+        _errorMessage = '發送驗證碼失敗，請稍後再試';
       }
       
       notifyListeners();
@@ -641,7 +676,7 @@ class AuthProvider with ChangeNotifier {
       } else if (errorStr.contains('User not found') || errorStr.contains('not found')) {
         _errorMessage = '驗證碼無效，請重新發送';
       } else {
-        _errorMessage = '驗證失敗：${e.toString()}';
+        _errorMessage = '驗證失敗，請稍後再試';
       }
       
       notifyListeners();
@@ -674,7 +709,7 @@ class AuthProvider with ChangeNotifier {
       } else if (errorStr.contains('驗證碼') || errorStr.contains('code')) {
         _errorMessage = '驗證碼錯誤，請重新驗證';
       } else {
-        _errorMessage = '更新密碼失敗：${e.toString()}';
+        _errorMessage = '更新密碼失敗，請稍後再試';
       }
       
       notifyListeners();
@@ -731,21 +766,33 @@ class AuthProvider with ChangeNotifier {
             print('Warning: Failed to create user record: $e');
           }
         } else {
-          // 如果從 users 表獲取成功，但 email 為空或與 auth 不一致，則更新
+          // 如果從 users 表獲取成功，優先使用 users 表的 email（因為它可能比 auth email 更新）
+          // 只有在 users 表的 email 為空時，才使用 auth email 並同步
           final authEmail = user.email ?? '';
-          if (_currentUser!.email.isEmpty || _currentUser!.email != authEmail) {
+          final usersTableEmail = _currentUser!.email;
+          
+          // 優先使用 users 表的 email，因為它可能比 auth email 更新（例如剛修改過 email）
+          // 只有在 users 表的 email 為空時，才使用 auth email
+          final finalEmail = usersTableEmail.isNotEmpty ? usersTableEmail : authEmail;
+          
+          // 只有在 email 真的不同時才更新（避免不必要的更新）
+          if (_currentUser!.email != finalEmail) {
             _currentUser = UserModel(
               id: _currentUser!.id,
-              email: authEmail,
+              email: finalEmail,
               name: _currentUser!.name,
               role: _currentUser!.role,
               studentId: _currentUser!.studentId,
             );
-            // 同步更新 users 表
-            try {
-              await _supabaseService.updateUserEmail(authEmail);
-            } catch (e) {
-              print('Warning: Failed to sync email: $e');
+            
+            // 只有在 users 表的 email 為空且 auth email 不為空時，才同步更新 users 表
+            // 不要用 auth email 覆蓋 users 表的 email（因為 users 表的 email 可能更新）
+            if (usersTableEmail.isEmpty && authEmail.isNotEmpty) {
+              try {
+                await _supabaseService.updateUserEmail(authEmail);
+              } catch (e) {
+                print('Warning: Failed to sync email: $e');
+              }
             }
           }
         }

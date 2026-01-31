@@ -487,11 +487,7 @@ class _CoursesTabState extends State<CoursesTab> {
                                         errorStr.contains('只有')) {
                                 errorMessage = errorStr;
                               } else {
-                                // 顯示完整錯誤訊息（截取前200字符避免過長）
-                                final fullError = errorStr.length > 200 
-                                    ? '${errorStr.substring(0, 200)}...' 
-                                    : errorStr;
-                                errorMessage = '刪除失敗：$fullError';
+                                errorMessage = '刪除失敗，請稍後再試';
                               }
                               
                               scaffoldMessenger.showSnackBar(
@@ -506,14 +502,6 @@ class _CoursesTabState extends State<CoursesTab> {
                                     borderRadius: BorderRadius.circular(10),
                                   ),
                                   duration: const Duration(seconds: 5),
-                                  action: SnackBarAction(
-                                    label: '查看日誌',
-                                    textColor: Colors.white,
-                                    onPressed: () {
-                                      print('完整錯誤訊息: $e');
-                                      print('完整堆疊: $stackTrace');
-                                    },
-                                  ),
                                 ),
                               );
                             }

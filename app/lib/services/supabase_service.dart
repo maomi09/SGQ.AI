@@ -311,7 +311,8 @@ class SupabaseService {
   }
 
   // 驗證註冊 OTP（優先使用後端 API，失敗時回退到 Supabase OTP）
-  Future<bool> verifySignupOTP(String email, String token) async {
+  // keepLoggedIn: 如果為 true，驗證失敗時不會登出已登入的用戶（用於修改信箱場景）
+  Future<bool> verifySignupOTP(String email, String token, {bool keepLoggedIn = false}) async {
     final cleanedEmail = email.trim().toLowerCase();
     
     // 優先嘗試使用後端 API
@@ -330,11 +331,19 @@ class SupabaseService {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         if (data['success'] == true) {
+          print('Backend API verification successful');
           return true; // 後端 API 驗證成功
+        } else {
+          // 如果 success 為 false，檢查是否有錯誤訊息
+          final errorMsg = data['message'] ?? data['detail'] ?? '驗證失敗';
+          print('Backend API verification failed: $errorMsg');
+          throw Exception(errorMsg);
         }
       } else {
         final errorData = jsonDecode(response.body);
-        throw Exception(errorData['detail'] ?? '驗證失敗');
+        final errorMsg = errorData['detail'] ?? '驗證失敗';
+        print('Backend API verification failed with status ${response.statusCode}: $errorMsg');
+        throw Exception(errorMsg);
       }
     } catch (e) {
       print('Backend API verification failed, falling back to Supabase OTP: $e');
@@ -343,6 +352,10 @@ class SupabaseService {
     
     // 回退到 Supabase OTP（如果後端 API 不可用）
     try {
+      // 檢查當前是否有登入的用戶
+      final currentUser = _client.auth.currentUser;
+      final wasLoggedIn = currentUser != null;
+      
       // 使用 email 類型驗證，這樣不會自動登入
       final response = await _client.auth.verifyOTP(
         email: cleanedEmail,
@@ -350,23 +363,30 @@ class SupabaseService {
         type: OtpType.email,
       );
       
-      // 如果驗證成功，立即登出（因為我們只是驗證，不是要登入）
-      // 註冊完成後會用 signUp 方法重新登入
-      if (response.user != null) {
-        print('OTP verified successfully, signing out to prevent auto-login...');
+      // 如果驗證成功，但之前沒有登入（註冊場景），則登出
+      // 如果之前已經登入（修改信箱場景），則保持登入狀態
+      if (response.user != null && !wasLoggedIn) {
+        print('OTP verified successfully, signing out to prevent auto-login (registration scenario)...');
         await _client.auth.signOut();
         // 等待一下確保登出完成
         await Future.delayed(const Duration(milliseconds: 100));
+      } else if (response.user != null && wasLoggedIn) {
+        print('OTP verified successfully, keeping user logged in (email update scenario)...');
+        // 保持登入狀態，不登出
       }
       
       return true; // 驗證成功
     } catch (e) {
       print('Verify OTP error: $e');
-      // 如果驗證失敗，確保沒有登入狀態
-      try {
-        await _client.auth.signOut();
-      } catch (_) {
-        // 忽略登出錯誤
+      // 如果驗證失敗，只有在之前沒有登入或 keepLoggedIn 為 false 時才登出
+      // 如果之前已經登入且 keepLoggedIn 為 true，保持登入狀態
+      final currentUser = _client.auth.currentUser;
+      if ((!keepLoggedIn || currentUser == null) && currentUser != null) {
+        try {
+          await _client.auth.signOut();
+        } catch (_) {
+          // 忽略登出錯誤
+        }
       }
       rethrow;
     }
@@ -700,15 +720,73 @@ class SupabaseService {
       throw Exception('Email already registered');
     }
     
-    await _client.auth.updateUser(
-      UserAttributes(email: cleanedEmail),
-    );
+    print('Updating email from ${_client.auth.currentUser?.email} to $cleanedEmail');
     
-    // 同步更新 users 表
-    await _client.from('users').update({
-      'email': cleanedEmail,
-      'updated_at': DateTime.now().toIso8601String(),
-    }).eq('id', userId);
+    try {
+      // 使用後端 API 更新 email（需要 service_role key 來更新 auth.users）
+      try {
+        final backendUrl = _backendUrl;
+        print('嘗試連接到後端 API: $backendUrl/api/admin/update-student-email');
+        final response = await http.post(
+          Uri.parse('$backendUrl/api/admin/update-student-email'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'student_id': userId,
+            'new_email': cleanedEmail,
+          }),
+        ).timeout(const Duration(seconds: 10));
+        
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          if (data['success'] == true) {
+            print('電子郵件已通過後端 API 更新: ${data['old_email']} -> ${data['new_email']}');
+            // 後端 API 已經同時更新了 users 表和 auth.users
+            return; // 成功，直接返回
+          } else {
+            throw Exception('後端 API 返回失敗：${data['message'] ?? '未知錯誤'}');
+          }
+        } else {
+          final errorData = jsonDecode(response.body);
+          throw Exception(errorData['detail'] ?? '更新電子郵件失敗');
+        }
+      } catch (backendError) {
+        print('後端 API 更新 email 失敗: $backendError');
+        // 如果後端 API 失敗，回退到直接更新 users 表（但 auth.users 不會更新）
+        print('警告：無法通過後端 API 更新 email，嘗試直接更新 users 表');
+        
+        // 更新 users 表
+        await _client.from('users').update({
+          'email': cleanedEmail,
+          'updated_at': DateTime.now().toIso8601String(),
+        }).eq('id', userId);
+        
+        print('Users table updated successfully to: $cleanedEmail');
+        
+        // 嘗試更新 Supabase Auth 的 email（可能失敗，因為需要確認）
+        try {
+          final response = await _client.auth.updateUser(
+            UserAttributes(email: cleanedEmail),
+          );
+          
+          print('Auth email update response: ${response.user?.email}');
+          
+          // 檢查是否真的更新了
+          if (response.user?.email?.toLowerCase() == cleanedEmail) {
+            print('Auth email updated successfully');
+          } else {
+            print('Warning: Auth email may require confirmation. Current auth email: ${response.user?.email}');
+            throw Exception('Auth email 需要確認，請檢查您的電子郵件');
+          }
+        } catch (authError) {
+          print('Warning: Failed to update auth email: $authError');
+          throw Exception('無法更新認證系統的電子郵件。請聯繫管理員或稍後再試。');
+        }
+      }
+      
+    } catch (e) {
+      print('Error updating email: $e');
+      rethrow;
+    }
   }
 
   // 驗證目前密碼
@@ -1473,19 +1551,35 @@ class SupabaseService {
     final questions = await getQuestions(studentId);
     
     int totalDuration = 0;
+    int completedSessionsCount = 0; // 只計算有 end_time 且有效的 sessions
+    
     for (var session in sessions as List) {
       if (session['end_time'] != null) {
         final start = DateTime.parse(session['start_time']);
         final end = DateTime.parse(session['end_time']);
-        totalDuration += end.difference(start).inMinutes;
+        final duration = end.difference(start).inMinutes;
+        
+        // 只計算有效的 session（時長為正數）
+        if (duration > 0) {
+          totalDuration += duration;
+          completedSessionsCount++;
+        } else {
+          // 記錄異常的 session（用於調試）
+          print('Warning: Invalid session duration for student $studentId: start=$start, end=$end, duration=$duration minutes');
+        }
       }
     }
     
+    // 只計算有完成 end_time 的 sessions 的平均值
+    final averageDuration = completedSessionsCount > 0 
+        ? totalDuration / completedSessionsCount 
+        : 0.0;
+    
     return {
       'weekly_login_frequency': _calculateWeeklyFrequency(sessions as List),
-      'average_session_duration': sessions.isNotEmpty ? totalDuration / sessions.length : 0,
+      'average_session_duration': averageDuration,
       'total_questions': questions.length,
-      'total_usage_time': totalDuration,
+      'total_usage_time': totalDuration, // 確保是非負數
     };
   }
 
@@ -1735,20 +1829,76 @@ class SupabaseService {
         return;
       }
 
-      // 更新 users 表
+      // 如果更新了 email，需要先通過後端 API 更新 auth.users
+      if (email != null) {
+        final cleanedEmail = email.trim().toLowerCase();
+        
+        // 使用後端 API 更新 email（需要 service_role key）
+        try {
+          final backendUrl = _backendUrl;
+          print('嘗試連接到後端 API: $backendUrl/api/admin/update-student-email');
+          final response = await http.post(
+            Uri.parse('$backendUrl/api/admin/update-student-email'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'student_id': studentId,
+              'new_email': cleanedEmail,
+            }),
+          ).timeout(const Duration(seconds: 10));
+          
+          if (response.statusCode == 200) {
+            final data = jsonDecode(response.body);
+            if (data['success'] == true) {
+              print('學生電子郵件已通過後端 API 更新: ${data['old_email']} -> ${data['new_email']}');
+              // 後端 API 已經同時更新了 users 表和 auth.users，所以不需要再更新 users 表
+              // 但如果有其他欄位需要更新，仍然需要更新 users 表
+              if (name != null || studentIdNumber != null) {
+                final otherUpdates = <String, dynamic>{};
+                if (name != null) {
+                  otherUpdates['name'] = name;
+                }
+                if (studentIdNumber != null) {
+                  otherUpdates['student_id'] = studentIdNumber;
+                }
+                if (otherUpdates.isNotEmpty) {
+                  await _client
+                      .from('users')
+                      .update(otherUpdates)
+                      .eq('id', studentId);
+                  print('其他欄位已更新');
+                }
+              }
+              return; // 成功，直接返回
+            } else {
+              throw Exception('後端 API 返回失敗：${data['message'] ?? '未知錯誤'}');
+            }
+          } else {
+            final errorData = jsonDecode(response.body);
+            throw Exception(errorData['detail'] ?? '更新電子郵件失敗');
+          }
+        } catch (e) {
+          print('後端 API 更新 email 失敗: $e');
+          // 如果後端 API 失敗，仍然嘗試更新 users 表（但 auth.users 不會更新）
+          print('警告：無法更新 auth.users 的 email，只更新 users 表');
+          // 繼續執行下面的更新 users 表的邏輯
+        }
+      }
+      
+      // 更新 users 表（如果沒有更新 email，或後端 API 失敗時）
       await _client
           .from('users')
           .update(updates)
           .eq('id', studentId);
-
-      // 如果更新了 email，也需要更新 auth.users
-      if (email != null) {
-        // 注意：更新 auth.users 需要管理員權限或使用服務角色
-        // 這裡我們只更新 users 表，email 的實際更改可能需要通過 Supabase Admin API
-        print('Note: Email update in auth.users may require admin privileges');
-      }
+      
+      print('Update student completed successfully');
     } catch (e) {
       print('Error updating student: $e');
+      print('Error type: ${e.runtimeType}');
+      if (e.toString().contains('row-level security') || 
+          e.toString().contains('RLS') ||
+          e.toString().contains('policy')) {
+        throw Exception('更新失敗：權限不足。請確認：\n1. 您是否以老師身份登入？\n2. 老師帳號的 metadata 中是否有 role？\n3. RLS 政策是否正確設定？\n\n詳細錯誤：$e');
+      }
       rethrow;
     }
   }

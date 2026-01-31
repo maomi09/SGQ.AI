@@ -92,7 +92,7 @@ class _ReportBugScreenState extends State<ReportBugScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('發送失敗：${e.toString()}'),
+            content: const Text('發送失敗，請稍後再試'),
             backgroundColor: Colors.red,
             duration: const Duration(seconds: 5),
           ),

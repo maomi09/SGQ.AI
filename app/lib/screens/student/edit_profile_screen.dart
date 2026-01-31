@@ -35,6 +35,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   bool _emailCodeSent = false;
   bool _emailCodeVerified = false;
   bool _isSendingEmailCode = false;
+  bool _isVerifyingCode = false;
   String? _selectedAnimal;
 
   // 可愛動物 emoji 列表（與 profile_tab.dart 保持一致）
@@ -328,22 +329,39 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       return;
     }
 
-    setState(() => _isLoading = true);
+    if (code.length != 6) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('驗證碼為 6 位數'),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(10)),
+          ),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isVerifyingCode = true;
+    });
 
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final verified = await authProvider.verifySignupOTP(newEmail, code);
 
     setState(() {
-      _isLoading = false;
+      _isVerifyingCode = false;
       _emailCodeVerified = verified;
     });
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(verified ? '驗證碼驗證成功' : '驗證碼錯誤或已過期'),
+          content: Text(verified ? '驗證碼驗證成功，可以儲存' : '驗證碼錯誤或已過期'),
           backgroundColor: verified ? Colors.green : Colors.red,
           behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: verified ? 2 : 3),
           shape: const RoundedRectangleBorder(
             borderRadius: BorderRadius.all(Radius.circular(10)),
           ),
@@ -376,7 +394,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     if (!_emailCodeVerified) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('請先發送並驗證驗證碼'),
+          content: Text('請先驗證新電子郵件的驗證碼'),
           backgroundColor: Colors.red,
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(
@@ -411,6 +429,15 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       
       if (success) {
         authProvider.clearError();
+        // 等待一下確保狀態更新完成
+        await Future.delayed(const Duration(milliseconds: 500));
+        // 不要調用 checkAuth，因為它可能會用 auth email 覆蓋 users 表的 email
+        // 直接刷新用戶資料即可
+        final user = authProvider.currentUser;
+        if (user != null) {
+          // 手動更新本地狀態，確保顯示新的 email
+          print('Email updated successfully, new email: ${user.email}');
+        }
         Navigator.pop(context);
       }
     }
@@ -517,7 +544,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         if (_currentIndex == 2) _buildPasswordForm(),
                         const SizedBox(height: 24),
                         ElevatedButton(
-                          onPressed: _isLoading ? null : () {
+                          onPressed: (_isLoading || (_currentIndex == 1 && !_emailCodeVerified)) ? null : () {
                             if (_currentIndex == 0) {
                               _saveProfile();
                             } else if (_currentIndex == 1) {
@@ -723,7 +750,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                '電子郵件',
+                '修改電子郵件',
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
@@ -731,11 +758,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 ),
               ),
               const SizedBox(height: 24),
+              // 1. 新電子郵件欄位
               TextFormField(
                 controller: _emailController,
                 enabled: !_emailCodeVerified,
                 decoration: InputDecoration(
-                  labelText: '電子郵件',
+                  labelText: '新電子郵件',
                   prefixIcon: const Icon(Icons.email_outlined),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -804,7 +832,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 },
                 validator: (value) {
                   if (value == null || value.trim().isEmpty) {
-                    return '請輸入電子郵件';
+                    return '請輸入新電子郵件';
                   }
                   if (!value.contains('@')) {
                     return '請輸入有效的電子郵件';
@@ -836,88 +864,146 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     ],
                   ),
                 ),
-              if (isEmailChanged && !_emailCodeVerified) ...[
+              // 2. 驗證碼欄位（及時驗證）
+              // 顯示條件：新郵件與當前郵件不同時顯示（發送驗證碼按鈕和驗證碼輸入框）
+              if (isEmailChanged) ...[
                 const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextFormField(
-                        controller: _verificationCodeController,
-                        decoration: InputDecoration(
-                          labelText: '驗證碼',
-                          prefixIcon: const Icon(Icons.verified_user_outlined),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          filled: true,
-                          fillColor: Colors.grey[50],
-                          hintText: _emailCodeSent ? '請輸入驗證碼' : '請先發送驗證碼',
-                        ),
-                        keyboardType: TextInputType.number,
-                        enabled: _emailCodeSent,
-                        validator: (value) {
-                          if (_emailCodeSent && (value == null || value.trim().isEmpty)) {
-                            return '請輸入驗證碼';
-                          }
-                          return null;
-                        },
+                // 發送驗證碼按鈕（在發送驗證碼之前顯示）
+                if (!_emailCodeSent) ...[
+                  ElevatedButton(
+                    onPressed: (_isSendingEmailCode || _isEmailTaken == true)
+                        ? null
+                        : _sendEmailVerificationCode,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue.shade600,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
                       ),
+                      elevation: 0,
+                      disabledBackgroundColor: Colors.grey[300],
+                      disabledForegroundColor: Colors.grey[600],
                     ),
-                    const SizedBox(width: 12),
-                    ElevatedButton(
-                      onPressed: (_isSendingEmailCode || _isEmailTaken == true)
-                          ? null
-                          : (_emailCodeSent ? _verifyEmailCode : _sendEmailVerificationCode),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _emailCodeSent 
-                            ? Colors.green.shade600 
-                            : Colors.blue.shade600,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        elevation: 0,
-                        disabledBackgroundColor: Colors.grey[300],
-                        disabledForegroundColor: Colors.grey[600],
-                      ),
-                      child: _isSendingEmailCode
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                              ),
-                            )
-                          : Text(
-                              _emailCodeSent ? '驗證' : '發送驗證碼',
-                              style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
+                    child: _isSendingEmailCode
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                            ),
+                          )
+                        : const Text(
+                            '發送驗證碼',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                  ),
+                ],
+                // 驗證碼輸入框（發送驗證碼後顯示）
+                if (_emailCodeSent) ...[
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextFormField(
+                          controller: _verificationCodeController,
+                          decoration: InputDecoration(
+                            labelText: '驗證碼',
+                            prefixIcon: const Icon(Icons.verified_user_outlined),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(
+                                color: _emailCodeVerified ? Colors.green : Colors.grey[300]!,
                               ),
                             ),
-                    ),
-                  ],
-                ),
-                if (_emailCodeSent && !_emailCodeVerified)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: TextButton(
-                      onPressed: (_isSendingEmailCode || _isEmailTaken == true)
-                          ? null
-                          : _sendEmailVerificationCode,
-                      child: Text(
-                        '重新發送驗證碼',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: (_isSendingEmailCode || _isEmailTaken == true)
-                              ? Colors.grey
-                              : Colors.blue,
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(
+                                color: _emailCodeVerified ? Colors.green : Colors.blue,
+                                width: 2,
+                              ),
+                            ),
+                            filled: true,
+                            fillColor: Colors.grey[50],
+                            hintText: '請輸入驗證碼（輸入後自動驗證）',
+                            suffixIcon: _isVerifyingCode
+                                ? const Padding(
+                                    padding: EdgeInsets.all(12),
+                                    child: SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    ),
+                                  )
+                                : _emailCodeVerified
+                                    ? const Icon(Icons.check_circle, color: Colors.green)
+                                    : null,
+                          ),
+                          keyboardType: TextInputType.number,
+                          enabled: !_emailCodeVerified,
+                          maxLength: 6,
+                          onChanged: (value) {
+                            // 當輸入 6 位數驗證碼時，自動驗證
+                            if (value.length == 6 && !_emailCodeVerified && !_isVerifyingCode) {
+                              _verifyEmailCode();
+                            }
+                          },
+                          validator: (value) {
+                            if (value == null || value.trim().isEmpty) {
+                              return '請輸入驗證碼';
+                            }
+                            if (value.length != 6) {
+                              return '驗證碼為 6 位數';
+                            }
+                            return null;
+                          },
                         ),
                       ),
-                    ),
+                    ],
                   ),
+                  if (!_emailCodeVerified)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Row(
+                        children: [
+                          TextButton(
+                            onPressed: (_isSendingEmailCode || _isEmailTaken == true)
+                                ? null
+                                : _sendEmailVerificationCode,
+                            child: Text(
+                              '重新發送驗證碼',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: (_isSendingEmailCode || _isEmailTaken == true)
+                                    ? Colors.grey
+                                    : Colors.blue,
+                              ),
+                            ),
+                          ),
+                          const Spacer(),
+                          if (_verificationCodeController.text.length == 6 && !_isVerifyingCode)
+                            TextButton(
+                              onPressed: _verifyEmailCode,
+                              child: const Text(
+                                '手動驗證',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.blue,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                ],
               ],
               if (_emailCodeVerified)
                 Padding(
@@ -927,7 +1013,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       Icon(Icons.check_circle, color: Colors.green.shade600, size: 20),
                       const SizedBox(width: 8),
                       Text(
-                        '驗證碼已驗證',
+                        '驗證碼已驗證，可以儲存',
                         style: TextStyle(
                           color: Colors.green.shade600,
                           fontSize: 14,
