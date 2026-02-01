@@ -1,0 +1,19 @@
+# Android 簽名配置範例
+# 複製此檔案為 key.properties 並填入實際值
+# 注意：key.properties 已加入 .gitignore，不會被提交到版本控制
+
+# Keystore 密碼
+storePassword=your_keystore_password_here
+
+# Key 密碼（通常與 storePassword 相同）
+keyPassword=your_key_password_here
+
+# Key 別名（創建 keystore 時使用的別名）
+keyAlias=sgq
+
+# Keystore 檔案路徑
+# Windows 範例：
+# storeFile=C:\\Users\\YourUsername\\sgq-release-key.jks
+# macOS/Linux 範例：
+# storeFile=/Users/YourUsername/sgq-release-key.jks
+storeFile=path_to_your_keystore_file.jks

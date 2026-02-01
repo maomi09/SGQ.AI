@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
@@ -15,8 +17,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_17.toString()
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        }
     }
 
     defaultConfig {
@@ -30,11 +34,33 @@ android {
         versionName = flutter.versionName
     }
 
+    // 簽名配置
+    signingConfigs {
+        create("release") {
+            val keystorePropertiesFile = rootProject.file("key.properties")
+            val keystoreProperties = Properties()
+            if (keystorePropertiesFile.exists()) {
+                keystoreProperties.load(keystorePropertiesFile.inputStream())
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+                storeFile = file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // 使用 release 簽名配置（如果 key.properties 存在）
+            if (rootProject.file("key.properties").exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            } else {
+                // 如果沒有 key.properties，使用 debug 簽名（僅用於開發測試）
+                signingConfig = signingConfigs.getByName("debug")
+            }
+            // 啟用程式碼混淆（可選，但建議啟用以減少 APK 大小）
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
 }

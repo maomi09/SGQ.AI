@@ -1,0 +1,14 @@
+﻿Running Gradle task 'bundleRelease'...                          
+Font asset "MaterialIcons-Regular.otf" was tree-shaken, reducing it from 1645184 to 8732 bytes (99.5% reduction). Tree-shaking can be disabled by providing the --no-tree-shake-icons flag when building your app.
+Running Gradle task 'bundleRelease'...                             12.5s
+flutter : Release app bundle failed to strip debug symbols from native libraries.
+位於 C:\Users\maola\AppData\Local\Temp\ps-script-e6ade87b-fda3-4831-8b79-eec1118b10af.ps1:84 字元:43
++ ... Downloads\SGQ.AI\app"; flutter build appbundle --release 2>&1 | Out-F ...
++                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Release app bun...tive libraries.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+Please run flutter doctor and ensure that the Android toolchain does not
+report any issues.
+
+Otherwise, file an issue at https://github.com/flutter/flutter/issues.

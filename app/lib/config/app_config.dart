@@ -11,8 +11,8 @@ class AppConfig {
   // 所有 ChatGPT 請求都通過後端 API 進行，後端會使用環境變數中的 OPENAI_API_KEY
   
   // 生產環境：AWS 後端 URL
-  // 使用 EC2 公共 IP
-  static const String backendApiUrl = 'http://13.219.229.38:8000';
+  // 使用 HTTPS 域名（正式上線）
+  static const String backendApiUrl = 'https://api.sagp-qp.com';
   
   // 本地開發環境 URL（如需本地開發，請取消註釋下面這行並註釋上面的行）
   // Android 模擬器使用 10.0.2.2，iOS 模擬器使用 localhost
