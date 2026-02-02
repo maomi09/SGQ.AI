@@ -47,7 +47,9 @@ class ChatGPTService {
       final data = jsonDecode(response.body);
       return data['response'] as String;
     } else {
-      throw Exception('Failed to get ChatGPT response: ${response.body}');
+      // 不洩露後端詳細錯誤資訊
+      print('ChatGPT API 錯誤: statusCode=${response.statusCode}, body=${response.body}');
+      throw Exception('無法取得 ChatGPT 回應，請稍後再試');
     }
   }
 
@@ -73,7 +75,9 @@ class ChatGPTService {
       final data = jsonDecode(response.body);
       return data['response'] as String;
     } else {
-      throw Exception('Failed to get ChatGPT response: ${response.body}');
+      // 不洩露後端詳細錯誤資訊
+      print('ChatGPT API 錯誤: statusCode=${response.statusCode}, body=${response.body}');
+      throw Exception('無法取得 ChatGPT 回應，請稍後再試');
     }
   }
 }

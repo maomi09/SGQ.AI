@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../services/supabase_service.dart';
+import '../../utils/error_handler.dart';
 
 class StudentManagementScreen extends StatefulWidget {
   const StudentManagementScreen({super.key});
@@ -115,7 +116,7 @@ class _StudentManagementScreenState extends State<StudentManagementScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('刪除失敗: ${e.toString()}'),
+            content: Text(ErrorHandler.getSafeErrorMessage(e)),
             backgroundColor: Colors.red,
             duration: const Duration(seconds: 3),
           ),
@@ -252,7 +253,7 @@ class _StudentManagementScreenState extends State<StudentManagementScreen> {
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('重置失敗: ${e.toString()}'),
+                      content: Text(ErrorHandler.getSafeErrorMessage(e)),
                       backgroundColor: Colors.red,
                       duration: const Duration(seconds: 3),
                     ),
@@ -392,7 +393,7 @@ class _StudentManagementScreenState extends State<StudentManagementScreen> {
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      content: Text('更新失敗: ${e.toString()}'),
+                      content: Text(ErrorHandler.getSafeErrorMessage(e)),
                       backgroundColor: Colors.red,
                       duration: const Duration(seconds: 3),
                     ),

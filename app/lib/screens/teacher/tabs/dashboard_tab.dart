@@ -8,6 +8,7 @@ import '../../../services/supabase_service.dart';
 import '../../../models/question_model.dart';
 import '../../../models/badge_model.dart';
 import '../../../utils/user_animal_helper.dart';
+import '../../../utils/error_handler.dart';
 
 class DashboardTab extends StatefulWidget {
   const DashboardTab({super.key});
@@ -636,7 +637,7 @@ class _DashboardTabState extends State<DashboardTab> {
                                       if (context.mounted) {
                                         ScaffoldMessenger.of(context).showSnackBar(
                                           SnackBar(
-                                            content: Text('標記失敗: $e'),
+                                            content: Text(ErrorHandler.getSafeErrorMessage(e)),
                                             backgroundColor: Colors.red,
                                           ),
                                         );
@@ -1425,7 +1426,7 @@ class _DashboardTabState extends State<DashboardTab> {
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
-                              content: Text('授予徽章失敗: $e'),
+                              content: Text(ErrorHandler.getSafeErrorMessage(e)),
                               backgroundColor: Colors.red,
                             ),
                           );

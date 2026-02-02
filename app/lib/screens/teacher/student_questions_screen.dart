@@ -4,6 +4,7 @@ import '../../providers/grammar_topic_provider.dart';
 import '../../services/supabase_service.dart';
 import '../../models/question_model.dart';
 import '../../models/grammar_topic_model.dart';
+import '../../utils/error_handler.dart';
 
 class StudentQuestionsScreen extends StatefulWidget {
   final String studentId;
@@ -108,7 +109,7 @@ class _StudentQuestionsScreenState extends State<StudentQuestionsScreen> with Si
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('載入對話紀錄失敗: $e'),
+            content: Text(ErrorHandler.getSafeErrorMessage(e)),
             backgroundColor: Colors.red,
           ),
         );
@@ -210,7 +211,7 @@ class _StudentQuestionsScreenState extends State<StudentQuestionsScreen> with Si
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('保存失敗: $e'),
+              content: Text(ErrorHandler.getSafeErrorMessage(e)),
               backgroundColor: Colors.red,
             ),
           );

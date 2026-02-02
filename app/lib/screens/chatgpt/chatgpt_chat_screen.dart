@@ -7,6 +7,7 @@ import '../../providers/auth_provider.dart';
 import '../../services/chatgpt_service.dart';
 import '../../services/supabase_service.dart';
 import '../../models/question_model.dart';
+import '../../utils/error_handler.dart';
 
 class ChatGPTChatScreen extends StatefulWidget {
   const ChatGPTChatScreen({super.key});
@@ -349,7 +350,7 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('完成階段失敗: $e'),
+            content: Text(ErrorHandler.getSafeErrorMessage(e)),
             backgroundColor: Colors.red,
             behavior: SnackBarBehavior.floating,
           ),
@@ -492,7 +493,7 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
     } catch (e) {
       print('Error clearing stage messages: $e');
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('清除對話失敗: $e')),
+        SnackBar(content: Text(ErrorHandler.getSafeErrorMessage(e))),
       );
       return;
     }
@@ -581,7 +582,7 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('更新階段失敗: $e'),
+            content: Text(ErrorHandler.getSafeErrorMessage(e)),
             backgroundColor: Colors.red,
           ),
         );
@@ -640,7 +641,7 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('發送 prompt 失敗: $e'),
+            content: Text(ErrorHandler.getSafeErrorMessage(e)),
             backgroundColor: Colors.red,
           ),
         );
@@ -734,7 +735,7 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('發送失敗: $e'),
+            content: Text(ErrorHandler.getSafeErrorMessage(e)),
             backgroundColor: Colors.red,
           ),
         );

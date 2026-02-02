@@ -326,9 +326,11 @@ Your scaffolding should support four dimensions:
         except Exception as openai_error:
             print(f"[ChatGPT Scaffolding] OpenAI API Error: {openai_error}")
             print(f"[ChatGPT Scaffolding] Error type: {type(openai_error).__name__}")
+            # 不洩露 OpenAI API 詳細錯誤資訊
+            print(f"[ChatGPT Scaffolding] OpenAI API Error: {openai_error}")
             raise HTTPException(
                 status_code=500, 
-                detail=f"OpenAI API error: {str(openai_error)}"
+                detail="無法取得 ChatGPT 回應，請稍後再試"
             )
     except HTTPException:
         raise
@@ -337,7 +339,9 @@ Your scaffolding should support four dimensions:
         print(f"[ChatGPT Scaffolding] Error type: {type(e).__name__}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        # 不洩露內部錯誤詳情
+        print(f"[ChatGPT Scaffolding] Unexpected error: {e}")
+        raise HTTPException(status_code=500, detail="伺服器錯誤，請稍後再試")
 
 
 @app.post("/api/chatgpt/additional", response_model=ChatGPTResponse)
@@ -405,9 +409,11 @@ Your scaffolding should support four dimensions:
         except Exception as openai_error:
             print(f"[ChatGPT Additional] OpenAI API Error: {openai_error}")
             print(f"[ChatGPT Additional] Error type: {type(openai_error).__name__}")
+            # 不洩露 OpenAI API 詳細錯誤資訊
+            print(f"[ChatGPT Scaffolding] OpenAI API Error: {openai_error}")
             raise HTTPException(
                 status_code=500, 
-                detail=f"OpenAI API error: {str(openai_error)}"
+                detail="無法取得 ChatGPT 回應，請稍後再試"
             )
     except HTTPException:
         raise
@@ -416,7 +422,9 @@ Your scaffolding should support four dimensions:
         print(f"[ChatGPT Additional] Error type: {type(e).__name__}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        # 不洩露內部錯誤詳情
+        print(f"[ChatGPT Scaffolding] Unexpected error: {e}")
+        raise HTTPException(status_code=500, detail="伺服器錯誤，請稍後再試")
 
 
 @app.get("/api/health")
@@ -810,7 +818,9 @@ async def send_feedback(request: FeedbackRequest):
         }
     except Exception as e:
         print(f"發送反饋錯誤: {e}")
-        raise HTTPException(status_code=500, detail=f"發送反饋失敗: {str(e)}")
+        # 不洩露內部錯誤詳情
+        print(f"發送反饋錯誤: {e}")
+        raise HTTPException(status_code=500, detail="發送反饋失敗，請稍後再試")
 
 
 @app.post("/api/admin/reset-student-password")
@@ -882,7 +892,9 @@ async def admin_reset_student_password(request: AdminResetPasswordRequest):
         raise
     except Exception as e:
         print(f"重置學生密碼錯誤: {e}")
-        raise HTTPException(status_code=500, detail=f"重置密碼失敗: {str(e)}")
+        # 不洩露內部錯誤詳情
+        print(f"重置密碼錯誤: {e}")
+        raise HTTPException(status_code=500, detail="重置密碼失敗，請稍後再試")
 
 
 @app.post("/api/admin/update-student-email")
@@ -953,5 +965,7 @@ async def admin_update_student_email(request: AdminUpdateStudentEmailRequest):
         raise
     except Exception as e:
         print(f"更新學生電子郵件錯誤: {e}")
-        raise HTTPException(status_code=500, detail=f"更新電子郵件失敗: {str(e)}")
+        # 不洩露內部錯誤詳情
+        print(f"更新學生電子郵件錯誤: {e}")
+        raise HTTPException(status_code=500, detail="更新電子郵件失敗，請稍後再試")
 

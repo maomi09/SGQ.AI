@@ -239,16 +239,19 @@ class SupabaseService {
           // 注意：驗證碼只會發送到電子郵件，不會在應用程式中顯示
           return; // 成功，直接返回
         } else {
-          throw Exception('後端 API 返回失敗：${data['message'] ?? '未知錯誤'}');
+          // 不洩露後端詳細錯誤資訊
+          print('後端 API 返回失敗: statusCode=${response.statusCode}, body=${response.body}');
+          throw Exception('操作失敗');
         }
       } else {
-        // 處理非 200 狀態碼
+        // 處理非 200 狀態碼，不洩露後端詳細錯誤資訊
         try {
-          final errorData = jsonDecode(response.body);
-          throw Exception('後端 API 錯誤：${errorData['detail'] ?? errorData['message'] ?? 'HTTP ${response.statusCode}'}');
+          jsonDecode(response.body); // 嘗試解析，但不使用結果
         } catch (_) {
-          throw Exception('後端 API 錯誤：HTTP ${response.statusCode}');
+          // JSON 解析失敗，繼續
         }
+        print('後端 API 錯誤: statusCode=${response.statusCode}, body=${response.body}');
+        throw Exception('操作失敗');
       }
     } catch (e) {
       final errorStr = e.toString();
@@ -335,15 +338,15 @@ class SupabaseService {
           return true; // 後端 API 驗證成功
         } else {
           // 如果 success 為 false，檢查是否有錯誤訊息
-          final errorMsg = data['message'] ?? data['detail'] ?? '驗證失敗';
-          print('Backend API verification failed: $errorMsg');
-          throw Exception(errorMsg);
+          // 不洩露後端詳細錯誤資訊
+          print('Backend API verification failed: statusCode=${response.statusCode}, body=${response.body}');
+          throw Exception('驗證失敗');
         }
       } else {
-        final errorData = jsonDecode(response.body);
-        final errorMsg = errorData['detail'] ?? '驗證失敗';
-        print('Backend API verification failed with status ${response.statusCode}: $errorMsg');
-        throw Exception(errorMsg);
+        // 不洩露後端詳細錯誤資訊
+        jsonDecode(response.body); // 嘗試解析，但不使用結果
+        print('Backend API verification failed: statusCode=${response.statusCode}, body=${response.body}');
+        throw Exception('驗證失敗');
       }
     } catch (e) {
       print('Backend API verification failed, falling back to Supabase OTP: $e');
@@ -430,16 +433,19 @@ class SupabaseService {
           // 注意：驗證碼只會發送到電子郵件，不會在應用程式中顯示
           return; // 成功，直接返回
         } else {
-          throw Exception('後端 API 返回失敗：${data['message'] ?? '未知錯誤'}');
+          // 不洩露後端詳細錯誤資訊
+          print('後端 API 返回失敗: statusCode=${response.statusCode}, body=${response.body}');
+          throw Exception('操作失敗');
         }
       } else {
-        // 處理非 200 狀態碼
+        // 處理非 200 狀態碼，不洩露後端詳細錯誤資訊
         try {
-          final errorData = jsonDecode(response.body);
-          throw Exception('後端 API 錯誤：${errorData['detail'] ?? errorData['message'] ?? 'HTTP ${response.statusCode}'}');
+          jsonDecode(response.body); // 嘗試解析，但不使用結果
         } catch (_) {
-          throw Exception('後端 API 錯誤：HTTP ${response.statusCode}');
+          // JSON 解析失敗，繼續
         }
+        print('後端 API 錯誤: statusCode=${response.statusCode}, body=${response.body}');
+        throw Exception('操作失敗');
       }
     } catch (e) {
       final errorStr = e.toString();
@@ -533,8 +539,10 @@ class SupabaseService {
           }
         }
       } else {
-        final errorData = jsonDecode(response.body);
-        throw Exception(errorData['detail'] ?? '驗證失敗');
+        // 不洩露後端詳細錯誤資訊
+        jsonDecode(response.body); // 嘗試解析，但不使用結果
+        print('後端 API 錯誤: statusCode=${response.statusCode}, body=${response.body}');
+        throw Exception('驗證失敗');
       }
     } catch (e) {
       print('Backend API verification failed, falling back to Supabase OTP: $e');
@@ -582,11 +590,15 @@ class SupabaseService {
           print('密碼已通過後端 API 更新');
           return; // 成功
         } else {
-          throw Exception('後端 API 返回失敗：${data['message'] ?? '未知錯誤'}');
+          // 不洩露後端詳細錯誤資訊
+          print('後端 API 返回失敗: statusCode=${response.statusCode}, body=${response.body}');
+          throw Exception('操作失敗');
         }
       } else {
-        final errorData = jsonDecode(response.body);
-        throw Exception(errorData['detail'] ?? '更新密碼失敗');
+        // 不洩露後端詳細錯誤資訊
+        jsonDecode(response.body); // 嘗試解析，但不使用結果
+        print('後端 API 錯誤: statusCode=${response.statusCode}, body=${response.body}');
+        throw Exception('更新密碼失敗');
       }
     } catch (e) {
       print('Backend API reset password failed: $e');
@@ -743,11 +755,15 @@ class SupabaseService {
             // 後端 API 已經同時更新了 users 表和 auth.users
             return; // 成功，直接返回
           } else {
-            throw Exception('後端 API 返回失敗：${data['message'] ?? '未知錯誤'}');
+            // 不洩露後端詳細錯誤資訊
+          print('後端 API 返回失敗: statusCode=${response.statusCode}, body=${response.body}');
+          throw Exception('操作失敗');
           }
         } else {
-          final errorData = jsonDecode(response.body);
-          throw Exception(errorData['detail'] ?? '更新電子郵件失敗');
+          // 不洩露後端詳細錯誤資訊
+          jsonDecode(response.body); // 嘗試解析，但不使用結果
+          print('後端 API 錯誤: statusCode=${response.statusCode}, body=${response.body}');
+          throw Exception('更新電子郵件失敗');
         }
       } catch (backendError) {
         print('後端 API 更新 email 失敗: $backendError');
@@ -1771,11 +1787,15 @@ class SupabaseService {
           print('學生密碼已通過後端 API 重置');
           return; // 成功
         } else {
-          throw Exception('後端 API 返回失敗：${data['message'] ?? '未知錯誤'}');
+          // 不洩露後端詳細錯誤資訊
+          print('後端 API 返回失敗: statusCode=${response.statusCode}, body=${response.body}');
+          throw Exception('操作失敗');
         }
       } else {
-        final errorData = jsonDecode(response.body);
-        throw Exception(errorData['detail'] ?? '重置密碼失敗');
+        // 不洩露後端詳細錯誤資訊
+        jsonDecode(response.body); // 嘗試解析，但不使用結果
+        print('後端 API 錯誤: statusCode=${response.statusCode}, body=${response.body}');
+        throw Exception('重置密碼失敗');
       }
     } catch (e) {
       print('Backend API reset student password failed: $e');
@@ -1870,11 +1890,15 @@ class SupabaseService {
               }
               return; // 成功，直接返回
             } else {
-              throw Exception('後端 API 返回失敗：${data['message'] ?? '未知錯誤'}');
+              // 不洩露後端詳細錯誤資訊
+          print('後端 API 返回失敗: statusCode=${response.statusCode}, body=${response.body}');
+          throw Exception('操作失敗');
             }
           } else {
-            final errorData = jsonDecode(response.body);
-            throw Exception(errorData['detail'] ?? '更新電子郵件失敗');
+            // 不洩露後端詳細錯誤資訊
+            jsonDecode(response.body); // 嘗試解析，但不使用結果
+            print('後端 API 錯誤: statusCode=${response.statusCode}, body=${response.body}');
+            throw Exception('更新電子郵件失敗');
           }
         } catch (e) {
           print('後端 API 更新 email 失敗: $e');

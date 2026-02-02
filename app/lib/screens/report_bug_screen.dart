@@ -3,6 +3,7 @@ import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'dart:convert';
 import '../config/app_config.dart';
+import '../utils/error_handler.dart';
 
 class ReportBugScreen extends StatefulWidget {
   const ReportBugScreen({super.key});
@@ -82,17 +83,20 @@ class _ReportBugScreenState extends State<ReportBugScreen> {
           // 返回上一頁
           Navigator.pop(context);
         } else {
-          throw Exception(data['message'] ?? '發送失敗');
+          // 不洩露後端詳細錯誤資訊
+          print('後端 API 錯誤: statusCode=${response.statusCode}, body=${response.body}');
+          throw Exception('發送失敗');
         }
       } else {
-        final errorData = jsonDecode(response.body);
-        throw Exception(errorData['detail'] ?? '發送失敗');
+        // 不洩露後端詳細錯誤資訊
+        print('後端 API 錯誤: statusCode=${response.statusCode}, body=${response.body}');
+        throw Exception('發送失敗');
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('發送失敗，請稍後再試'),
+            content: Text(ErrorHandler.getSafeErrorMessage(e)),
             backgroundColor: Colors.red,
             duration: const Duration(seconds: 5),
           ),

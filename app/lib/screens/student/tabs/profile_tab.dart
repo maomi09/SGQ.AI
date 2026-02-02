@@ -6,6 +6,7 @@ import '../../../providers/auth_provider.dart';
 import '../../../providers/grammar_topic_provider.dart';
 import '../../../services/supabase_service.dart';
 import '../../../utils/user_animal_helper.dart';
+import '../../../utils/error_handler.dart';
 import '../edit_profile_screen.dart';
 import '../../teacher/student_management_screen.dart';
 import '../../privacy_policy_screen.dart';
@@ -809,7 +810,7 @@ class _ProfileTabState extends State<ProfileTab> {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('載入通知失敗: $e'),
+            content: Text(ErrorHandler.getSafeErrorMessage(e)),
             backgroundColor: Colors.red,
           ),
         );

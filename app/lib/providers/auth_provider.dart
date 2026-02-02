@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/user_model.dart';
 import '../services/supabase_service.dart';
+import '../utils/error_handler.dart';
 
 class AuthProvider with ChangeNotifier {
   final SupabaseService _supabaseService = SupabaseService();
@@ -105,21 +106,8 @@ class AuthProvider with ChangeNotifier {
       print('Sign up error: $e');
       _isLoading = false;
       
-      // 設置詳細的錯誤訊息
-      final errorStr = e.toString();
-      if (errorStr.contains('email_address_invalid') || errorStr.contains('Invalid email') || errorStr.contains('Invalid email format')) {
-        _errorMessage = '註冊失敗：電子郵件格式無效';
-      } else if (errorStr.contains('User already registered') || 
-                 errorStr.contains('already registered') || 
-                 errorStr.contains('Email already registered')) {
-        _errorMessage = '註冊失敗：此電子郵件已被註冊';
-      } else if (errorStr.contains('Password') || errorStr.contains('password')) {
-        _errorMessage = '註冊失敗：密碼不符合要求（至少6個字符）';
-      } else if (errorStr.contains('Email rate limit')) {
-        _errorMessage = '註冊失敗：請求過於頻繁，請稍後再試';
-      } else {
-        _errorMessage = '註冊失敗，請稍後再試';
-      }
+      // 使用 ErrorHandler 處理錯誤，不洩露詳細錯誤訊息
+      _errorMessage = '註冊失敗：${ErrorHandler.getSafeErrorMessage(e)}';
       
       notifyListeners();
       return false;
@@ -231,23 +219,8 @@ class AuthProvider with ChangeNotifier {
       _currentUser = null;
       _isLoading = false;
       
-      // 根據 Supabase AuthException 的錯誤碼和訊息設置錯誤訊息
-      if (e.statusCode == '400' || 
-          e.message.contains('Invalid login credentials') || 
-          e.message.contains('invalid_credentials') ||
-          e.message.contains('Invalid login')) {
-        _errorMessage = '登入失敗：帳號或密碼錯誤';
-      } else if (e.message.contains('Email not confirmed') || 
-                 e.message.contains('email_not_confirmed')) {
-        _errorMessage = '登入失敗：請先確認您的電子郵件';
-      } else if (e.message.contains('Too many requests') || 
-                 e.message.contains('rate_limit')) {
-        _errorMessage = '登入失敗：嘗試次數過多，請稍後再試';
-      } else if (e.message.contains('User not found')) {
-        _errorMessage = '登入失敗：找不到此帳號';
-      } else {
-        _errorMessage = '登入失敗：${e.message}';
-      }
+      // 使用 ErrorHandler 處理錯誤，不洩露 Supabase 詳細錯誤訊息
+      _errorMessage = '登入失敗：${ErrorHandler.getSafeErrorMessage(e)}';
       
       notifyListeners();
       return false;
@@ -256,14 +229,8 @@ class AuthProvider with ChangeNotifier {
       _currentUser = null;
       _isLoading = false;
       
-      // 處理其他類型的錯誤
-      final errorStr = e.toString();
-      if (errorStr.contains('Invalid login credentials') || 
-          errorStr.contains('invalid_credentials')) {
-        _errorMessage = '登入失敗：帳號或密碼錯誤';
-      } else {
-        _errorMessage = '登入失敗：請檢查帳號密碼是否正確';
-      }
+      // 使用 ErrorHandler 處理錯誤，不洩露詳細錯誤訊息
+      _errorMessage = '登入失敗：${ErrorHandler.getSafeErrorMessage(e)}';
       
       notifyListeners();
       return false;
@@ -338,17 +305,8 @@ class AuthProvider with ChangeNotifier {
       _isLoading = false;
       
       // 設置詳細的錯誤訊息
-      final errorStr = e.toString();
-      if (errorStr.contains('Invalid email') || errorStr.contains('Invalid email format')) {
-        _errorMessage = '電子郵件格式無效';
-      } else if (errorStr.contains('Email already registered') || 
-                 errorStr.contains('already registered')) {
-        _errorMessage = '此電子郵件已被其他帳號使用';
-      } else if (errorStr.contains('User not authenticated')) {
-        _errorMessage = '用戶未登入，請重新登入';
-      } else {
-        _errorMessage = '更新失敗，請稍後再試';
-      }
+      // 使用 ErrorHandler 處理錯誤，不洩露詳細錯誤訊息
+      _errorMessage = '更新失敗：${ErrorHandler.getSafeErrorMessage(e)}';
       
       notifyListeners();
       return false;
@@ -479,18 +437,8 @@ class AuthProvider with ChangeNotifier {
     } catch (e) {
       print('Send signup OTP error: $e');
       
-      final errorStr = e.toString();
-      if (errorStr.contains('email_address_invalid') || errorStr.contains('Invalid email')) {
-        _errorMessage = '電子郵件格式無效';
-      } else if (errorStr.contains('Email rate limit') || errorStr.contains('rate_limit')) {
-        _errorMessage = '請求過於頻繁，請稍後再試';
-      } else if (errorStr.contains('otp_disabled') || 
-                 errorStr.contains('Signups not allowed') ||
-                 errorStr.contains('無法發送驗證碼')) {
-        _errorMessage = '無法發送驗證碼，請稍後再試';
-      } else {
-        _errorMessage = '發送驗證碼失敗，請稍後再試';
-      }
+      // 使用 ErrorHandler 處理錯誤，不洩露詳細錯誤訊息
+      _errorMessage = '發送驗證碼失敗：${ErrorHandler.getSafeErrorMessage(e)}';
       
       notifyListeners();
       return false;
@@ -538,21 +486,8 @@ class AuthProvider with ChangeNotifier {
         _currentUser = null;
       }
       
-      final errorStr = e.toString();
-      // 優先檢查後端 API 返回的具體錯誤訊息
-      if (errorStr.contains('驗證碼錯誤')) {
-        _errorMessage = '驗證碼錯誤';
-      } else if (errorStr.contains('驗證碼已過期') || errorStr.contains('驗證碼不存在或已過期')) {
-        _errorMessage = '驗證碼已過期，請重新發送';
-      } else if (errorStr.contains('Invalid token') || errorStr.contains('invalid_token')) {
-        _errorMessage = '驗證碼錯誤';
-      } else if (errorStr.contains('Token expired') || errorStr.contains('expired')) {
-        _errorMessage = '驗證碼已過期，請重新發送';
-      } else if (errorStr.contains('User not found') || errorStr.contains('not found')) {
-        _errorMessage = '驗證碼無效，請重新發送';
-      } else {
-        _errorMessage = '驗證失敗，請稍後再試';
-      }
+      // 使用 ErrorHandler 處理錯誤，不洩露詳細錯誤訊息
+      _errorMessage = '驗證失敗：${ErrorHandler.getSafeErrorMessage(e)}';
       
       notifyListeners();
       return false;
@@ -573,16 +508,8 @@ class AuthProvider with ChangeNotifier {
       print('Send password reset email error: $e');
       _isLoading = false;
       
-      final errorStr = e.toString();
-      if (errorStr.contains('email_address_invalid') || errorStr.contains('Invalid email')) {
-        _errorMessage = '電子郵件格式無效';
-      } else if (errorStr.contains('User not found') || errorStr.contains('not found')) {
-        _errorMessage = '找不到此電子郵件地址的帳號';
-      } else if (errorStr.contains('Email rate limit') || errorStr.contains('rate_limit')) {
-        _errorMessage = '請求過於頻繁，請稍後再試';
-      } else {
-        _errorMessage = '發送重設密碼郵件失敗，請稍後再試';
-      }
+      // 使用 ErrorHandler 處理錯誤，不洩露詳細錯誤訊息
+      _errorMessage = '發送重設密碼郵件失敗：${ErrorHandler.getSafeErrorMessage(e)}';
       
       notifyListeners();
       return false;
@@ -603,14 +530,8 @@ class AuthProvider with ChangeNotifier {
       print('Reset password error: $e');
       _isLoading = false;
       
-      final errorStr = e.toString();
-      if (errorStr.contains('Password') || errorStr.contains('password')) {
-        _errorMessage = '密碼不符合要求（至少6個字符）';
-      } else if (errorStr.contains('Invalid token') || errorStr.contains('invalid_token')) {
-        _errorMessage = '重設密碼連結無效或已過期';
-      } else {
-        _errorMessage = '重設密碼失敗，請稍後再試';
-      }
+      // 使用 ErrorHandler 處理錯誤，不洩露詳細錯誤訊息
+      _errorMessage = '重設密碼失敗：${ErrorHandler.getSafeErrorMessage(e)}';
       
       notifyListeners();
       return false;
@@ -632,16 +553,8 @@ class AuthProvider with ChangeNotifier {
       print('Send forgot password OTP error: $e');
       _isLoading = false;
       
-      final errorStr = e.toString();
-      if (errorStr.contains('email_address_invalid') || errorStr.contains('Invalid email')) {
-        _errorMessage = '電子郵件格式無效';
-      } else if (errorStr.contains('User not found') || errorStr.contains('not found')) {
-        _errorMessage = '找不到此電子郵件地址的帳號';
-      } else if (errorStr.contains('Email rate limit') || errorStr.contains('rate_limit')) {
-        _errorMessage = '請求過於頻繁，請稍後再試';
-      } else {
-        _errorMessage = '發送驗證碼失敗，請稍後再試';
-      }
+      // 使用 ErrorHandler 處理錯誤，不洩露詳細錯誤訊息
+      _errorMessage = '發送驗證碼失敗：${ErrorHandler.getSafeErrorMessage(e)}';
       
       notifyListeners();
       return false;
@@ -663,21 +576,8 @@ class AuthProvider with ChangeNotifier {
       print('Verify forgot password OTP error: $e');
       _isLoading = false;
       
-      final errorStr = e.toString();
-      // 優先檢查後端 API 返回的具體錯誤訊息
-      if (errorStr.contains('驗證碼錯誤')) {
-        _errorMessage = '驗證碼錯誤';
-      } else if (errorStr.contains('驗證碼已過期') || errorStr.contains('驗證碼不存在或已過期')) {
-        _errorMessage = '驗證碼已過期，請重新發送';
-      } else if (errorStr.contains('Invalid token') || errorStr.contains('invalid_token')) {
-        _errorMessage = '驗證碼錯誤';
-      } else if (errorStr.contains('Token expired') || errorStr.contains('expired')) {
-        _errorMessage = '驗證碼已過期，請重新發送';
-      } else if (errorStr.contains('User not found') || errorStr.contains('not found')) {
-        _errorMessage = '驗證碼無效，請重新發送';
-      } else {
-        _errorMessage = '驗證失敗，請稍後再試';
-      }
+      // 使用 ErrorHandler 處理錯誤，不洩露詳細錯誤訊息
+      _errorMessage = '驗證失敗：${ErrorHandler.getSafeErrorMessage(e)}';
       
       notifyListeners();
       return false;
@@ -699,18 +599,8 @@ class AuthProvider with ChangeNotifier {
       print('Update password after OTP error: $e');
       _isLoading = false;
       
-      final errorStr = e.toString();
-      if (errorStr.contains('Password') || errorStr.contains('password')) {
-        _errorMessage = '密碼不符合要求（至少6個字符）';
-      } else if (errorStr.contains('驗證碼錯誤')) {
-        _errorMessage = '驗證碼錯誤，請重新驗證';
-      } else if (errorStr.contains('驗證碼已過期') || errorStr.contains('驗證碼不存在或已過期')) {
-        _errorMessage = '驗證碼已過期，請重新發送驗證碼';
-      } else if (errorStr.contains('驗證碼') || errorStr.contains('code')) {
-        _errorMessage = '驗證碼錯誤，請重新驗證';
-      } else {
-        _errorMessage = '更新密碼失敗，請稍後再試';
-      }
+      // 使用 ErrorHandler 處理錯誤，不洩露詳細錯誤訊息
+      _errorMessage = '更新密碼失敗：${ErrorHandler.getSafeErrorMessage(e)}';
       
       notifyListeners();
       return false;

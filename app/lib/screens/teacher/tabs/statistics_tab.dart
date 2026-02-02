@@ -5,6 +5,7 @@ import '../../../providers/auth_provider.dart';
 import '../../../providers/grammar_topic_provider.dart';
 import '../../../services/supabase_service.dart';
 import '../../../models/question_model.dart';
+import '../../../utils/error_handler.dart';
 import '../../teacher/student_questions_screen.dart';
 
 class StatisticsTab extends StatefulWidget {
@@ -87,7 +88,7 @@ class _StatisticsTabState extends State<StatisticsTab> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('載入數據失敗: $e'),
+            content: Text(ErrorHandler.getSafeErrorMessage(e)),
             backgroundColor: Colors.red,
             duration: const Duration(seconds: 5),
           ),
