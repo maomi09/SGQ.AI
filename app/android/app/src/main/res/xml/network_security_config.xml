@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- 允許所有 HTTPS 流量（生產環境） -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <!-- 信任系統預設的 CA 證書 -->
+            <certificates src="system" />
+            <!-- 信任用戶安裝的 CA 證書（可選，用於開發） -->
+            <!-- <certificates src="user" /> -->
+        </trust-anchors>
+    </base-config>
+    
+    <!-- 允許特定域名的 HTTPS 連接 -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">supabase.co</domain>
+        <domain includeSubdomains="true">api.sagp-qp.com</domain>
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </domain-config>
+</network-security-config>
