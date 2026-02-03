@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/app_config.dart';
+import '../models/question_model.dart';
 
 class ChatGPTService {
   final String backendUrl;
@@ -30,7 +31,7 @@ class ChatGPTService {
     // }
   }
 
-  Future<String> getScaffoldingResponse(String question, int stage) async {
+  Future<String> getScaffoldingResponse(QuestionModel questionModel, int stage) async {
     // 獲取當前用戶的 JWT Token
     final supabase = Supabase.instance.client;
     final session = supabase.auth.currentSession;
@@ -40,16 +41,31 @@ class ChatGPTService {
     
     final url = '$backendUrl/api/chatgpt/scaffolding';
     print('發送請求到: $url');
+    
+    // 構建請求體，包含完整的題目資訊
+    final requestBody = <String, dynamic>{
+      'question': questionModel.question,
+      'question_type': questionModel.type.toString().split('.').last, // "multipleChoice" 或 "shortAnswer"
+      'stage': stage,
+    };
+    
+    // 添加選項（如果是選擇題）
+    if (questionModel.options != null && questionModel.options!.isNotEmpty) {
+      requestBody['options'] = questionModel.options;
+    }
+    
+    // 添加正確答案（如果有）
+    if (questionModel.correctAnswer != null && questionModel.correctAnswer!.isNotEmpty) {
+      requestBody['correct_answer'] = questionModel.correctAnswer;
+    }
+    
     final response = await http.post(
       Uri.parse(url),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ${session.accessToken}',
       },
-      body: jsonEncode({
-        'question': question,
-        'stage': stage,
-      }),
+      body: jsonEncode(requestBody),
     );
 
     if (response.statusCode == 200) {
@@ -64,7 +80,7 @@ class ChatGPTService {
 
 
   // 處理追加問題（基於對話歷史）
-  Future<String> getAdditionalResponse(String userMessage, String question, int stage, List<Map<String, dynamic>> conversationHistory) async {
+  Future<String> getAdditionalResponse(String userMessage, QuestionModel questionModel, int stage, List<Map<String, dynamic>> conversationHistory) async {
     // 獲取當前用戶的 JWT Token
     final supabase = Supabase.instance.client;
     final session = supabase.auth.currentSession;
@@ -74,18 +90,33 @@ class ChatGPTService {
     
     final url = '$backendUrl/api/chatgpt/additional';
     print('發送追加問題請求到: $url');
+    
+    // 構建請求體，包含完整的題目資訊
+    final requestBody = <String, dynamic>{
+      'user_message': userMessage,
+      'question': questionModel.question,
+      'question_type': questionModel.type.toString().split('.').last, // "multipleChoice" 或 "shortAnswer"
+      'stage': stage,
+      'conversation_history': conversationHistory,
+    };
+    
+    // 添加選項（如果是選擇題）
+    if (questionModel.options != null && questionModel.options!.isNotEmpty) {
+      requestBody['options'] = questionModel.options;
+    }
+    
+    // 添加正確答案（如果有）
+    if (questionModel.correctAnswer != null && questionModel.correctAnswer!.isNotEmpty) {
+      requestBody['correct_answer'] = questionModel.correctAnswer;
+    }
+    
     final response = await http.post(
       Uri.parse(url),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ${session.accessToken}',
       },
-      body: jsonEncode({
-        'user_message': userMessage,
-        'question': question,
-        'stage': stage,
-        'conversation_history': conversationHistory,
-      }),
+      body: jsonEncode(requestBody),
     );
 
     if (response.statusCode == 200) {

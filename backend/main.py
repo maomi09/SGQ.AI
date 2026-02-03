@@ -279,12 +279,18 @@ def send_with_sendgrid(to_email: str, verification_code: str):
 
 class QuestionRequest(BaseModel):
     question: str
+    question_type: Optional[str] = None  # "multipleChoice" 或 "shortAnswer"
+    options: Optional[List[str]] = None  # 選擇題的選項
+    correct_answer: Optional[str] = None  # 正確答案
     stage: int
 
 
 class AdditionalQuestionRequest(BaseModel):
     user_message: str
     question: str
+    question_type: Optional[str] = None  # "multipleChoice" 或 "shortAnswer"
+    options: Optional[List[str]] = None  # 選擇題的選項
+    correct_answer: Optional[str] = None  # 正確答案
     stage: int
     conversation_history: List[Dict[str, Any]]
 
@@ -383,9 +389,29 @@ This is my final grammar question:
         if request.stage not in stage_prompts:
             raise HTTPException(status_code=400, detail="Invalid stage")
 
-        user_prompt = stage_prompts[request.stage].format(question=request.question)
+        # 根據題型構建 user_prompt
+        base_prompt = stage_prompts[request.stage].format(question=request.question)
+        
+        # 如果是選擇題，添加選項和正確答案
+        if request.question_type == "multipleChoice" and request.options:
+            options_text = "\n".join([f"{chr(65+i)}. {opt}" for i, opt in enumerate(request.options)])
+            correct_answer_text = f"正確答案：{request.correct_answer}" if request.correct_answer else "正確答案：未提供"
+            user_prompt = f"""{base_prompt}
 
-        print(f"[ChatGPT Scaffolding] Stage: {request.stage}, Question: {request.question[:50]}...")
+選項：
+{options_text}
+{correct_answer_text}"""
+        # 如果是問答題，只添加正確答案
+        elif request.question_type == "shortAnswer":
+            correct_answer_text = f"正確答案：{request.correct_answer}" if request.correct_answer else "正確答案：未提供"
+            user_prompt = f"""{base_prompt}
+
+{correct_answer_text}"""
+        else:
+            # 預設情況（沒有題型資訊或未知題型）
+            user_prompt = base_prompt
+
+        print(f"[ChatGPT Scaffolding] Stage: {request.stage}, Type: {request.question_type}, Question: {request.question[:50]}...")
         
         system_prompt = """You are an instructional AI tutor supporting university EFL students
 in Student-Generated Grammar Question (SGQ) activities.
@@ -648,13 +674,45 @@ END
             {"role": "system", "content": system_prompt}
         ]
 
-        # 添加對話歷史
+        # 檢查對話歷史中是否包含原始題目
+        has_question_context = False
         for msg in request.conversation_history:
-            role = "user" if msg.get("type") == "user" else "assistant"
+            content = str(msg.get("content", ""))
+            if "題目為:" in content or request.question in content:
+                has_question_context = True
+                break
+
+        # 如果對話歷史中沒有原始題目，先添加它
+        if not has_question_context:
+            # 根據題型構建題目資訊
+            question_info = f"原始題目：{request.question}"
+            if request.question_type == "multipleChoice" and request.options:
+                options_text = "\n".join([f"{chr(65+i)}. {opt}" for i, opt in enumerate(request.options)])
+                question_info += f"\n選項：\n{options_text}"
+            if request.correct_answer:
+                question_info += f"\n正確答案：{request.correct_answer}"
+            
             messages.append({
-                "role": role,
-                "content": msg.get("content", "")
+                "role": "user",
+                "content": question_info
             })
+
+        # 添加對話歷史（過濾掉 system 類型的消息，因為已經在 system_prompt 中）
+        for msg in request.conversation_history:
+            msg_type = msg.get("type", "")
+            # 只處理 user 和 assistant 類型的消息
+            if msg_type in ["user", "assistant"]:
+                role = "user" if msg_type == "user" else "assistant"
+                messages.append({
+                    "role": role,
+                    "content": msg.get("content", "")
+                })
+            # 如果是 system 類型且包含題目，也加入（作為 user 消息）
+            elif msg_type == "system" and "題目為:" in str(msg.get("content", "")):
+                messages.append({
+                    "role": "user",
+                    "content": msg.get("content", "")
+                })
 
         # 添加用戶的新問題
         messages.append({

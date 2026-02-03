@@ -513,6 +513,31 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
       return;
     }
 
+    // 重新載入最新的題目資料，確保使用修改後的題目和答案
+    print('Reloading question data to get latest updates...');
+    final questionProvider = Provider.of<QuestionProvider>(context, listen: false);
+    try {
+      await questionProvider.loadQuestions(
+        _currentQuestion!.studentId,
+        grammarTopicId: _currentQuestion!.grammarTopicId,
+      );
+      
+      // 從 QuestionProvider 獲取最新的題目
+      final updatedQuestion = questionProvider.questions.firstWhere(
+        (q) => q.id == _currentQuestion!.id,
+        orElse: () => _currentQuestion!,
+      );
+      
+      // 更新 _currentQuestion 為最新資料
+      setState(() {
+        _currentQuestion = updatedQuestion;
+      });
+      print('Question data reloaded: question="${_currentQuestion!.question.substring(0, _currentQuestion!.question.length > 50 ? 50 : _currentQuestion!.question.length)}..."');
+    } catch (e) {
+      print('Error reloading question data: $e');
+      // 如果載入失敗，繼續使用現有的 _currentQuestion
+    }
+
     final chatProvider = Provider.of<ChatProvider>(context, listen: false);
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final studentId = authProvider.currentUser?.id;
@@ -616,7 +641,7 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
 
       print('Sending ChatGPT request for stage $stage...');
       final response = await chatGPTService.getScaffoldingResponse(
-        _currentQuestion!.question,
+        _currentQuestion!,
         stage,
       );
       print('ChatGPT response received: ${response.substring(0, response.length > 50 ? 50 : response.length)}...');
@@ -709,7 +734,7 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
       print('Sending to ChatGPT...');
       final response = await chatGPTService.getAdditionalResponse(
         message,
-        _currentQuestion!.question,
+        _currentQuestion!,
         currentStage,
         conversationHistory,
       );
