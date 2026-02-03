@@ -735,13 +735,22 @@ class SupabaseService {
     print('Updating email from ${_client.auth.currentUser?.email} to $cleanedEmail');
     
     try {
-      // 使用後端 API 更新 email（需要 service_role key 來更新 auth.users）
+      // 使用後端 API 更新 email（需要 JWT Token 驗證和老師角色）
       try {
+        // 獲取當前用戶的 JWT Token
+        final session = _client.auth.currentSession;
+        if (session == null || session.accessToken.isEmpty) {
+          throw Exception('請先登入');
+        }
+        
         final backendUrl = _backendUrl;
         print('嘗試連接到後端 API: $backendUrl/api/admin/update-student-email');
         final response = await http.post(
           Uri.parse('$backendUrl/api/admin/update-student-email'),
-          headers: {'Content-Type': 'application/json'},
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ${session.accessToken}',
+          },
           body: jsonEncode({
             'student_id': userId,
             'new_email': cleanedEmail,
@@ -1768,13 +1777,22 @@ class SupabaseService {
       throw Exception('密碼長度至少需要6個字符');
     }
     
-    // 使用後端 API 重置密碼（需要 service_role key）
+    // 使用後端 API 重置密碼（需要 JWT Token 驗證和老師角色）
     try {
+      // 獲取當前用戶的 JWT Token
+      final session = _client.auth.currentSession;
+      if (session == null || session.accessToken.isEmpty) {
+        throw Exception('請先登入');
+      }
+      
       final backendUrl = _backendUrl;
       print('嘗試連接到後端 API: $backendUrl/api/admin/reset-student-password');
       final response = await http.post(
         Uri.parse('$backendUrl/api/admin/reset-student-password'),
-        headers: {'Content-Type': 'application/json'},
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ${session.accessToken}',
+        },
         body: jsonEncode({
           'student_email': cleanedEmail,
           'new_password': newPassword,
@@ -1853,13 +1871,22 @@ class SupabaseService {
       if (email != null) {
         final cleanedEmail = email.trim().toLowerCase();
         
-        // 使用後端 API 更新 email（需要 service_role key）
+        // 使用後端 API 更新 email（需要 JWT Token 驗證）
         try {
+          // 獲取當前用戶的 JWT Token
+          final session = _client.auth.currentSession;
+          if (session == null || session.accessToken.isEmpty) {
+            throw Exception('請先登入');
+          }
+          
           final backendUrl = _backendUrl;
           print('嘗試連接到後端 API: $backendUrl/api/admin/update-student-email');
           final response = await http.post(
             Uri.parse('$backendUrl/api/admin/update-student-email'),
-            headers: {'Content-Type': 'application/json'},
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ${session.accessToken}',
+            },
             body: jsonEncode({
               'student_id': studentId,
               'new_email': cleanedEmail,

@@ -8,6 +8,7 @@ import 'providers/grammar_topic_provider.dart';
 import 'providers/question_provider.dart';
 import 'providers/badge_provider.dart';
 import 'providers/chat_provider.dart';
+import 'services/notification_service.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/auth/forgot_password_screen.dart';
 import 'screens/auth/reset_password_screen.dart';
@@ -26,6 +27,9 @@ void main() async {
       authFlowType: AuthFlowType.pkce,
     ),
   );
+
+  // 初始化通知服務
+  await NotificationService().initialize();
 
   runApp(const MyApp());
 }

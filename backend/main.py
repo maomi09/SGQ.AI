@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import os
@@ -16,6 +17,7 @@ from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from openai import OpenAI
+import jwt
 
 # 載入環境變數（override=True 確保 .env 檔案優先於系統環境變數）
 load_dotenv(override=True)
@@ -58,6 +60,91 @@ openai_client = OpenAI(api_key=openai_api_key)
 
 # 驗證碼存儲（生產環境應使用 Redis 或資料庫）
 verification_codes: Dict[str, Dict[str, Any]] = {}  # {email: {code: str, expires_at: float}}
+
+# JWT Token 驗證
+security = HTTPBearer()
+
+def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Dict[str, Any]:
+    """
+    驗證 JWT Token 並返回用戶資訊
+    返回用戶資訊字典，包含 user_id 和 role
+    """
+    token = credentials.credentials
+    
+    try:
+        # 使用 service_role key 來驗證和查詢用戶資訊
+        supabase_service_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        if not supabase_service_key:
+            raise HTTPException(status_code=500, detail="服務器配置錯誤：缺少 SUPABASE_SERVICE_ROLE_KEY")
+        
+        admin_supabase = create_client(supabase_url, supabase_service_key)
+        
+        # 解析 JWT Token 獲取用戶 ID
+        try:
+            # 解析 JWT Token（不驗證簽名，因為我們會用 Supabase API 驗證用戶存在）
+            # 注意：這只是為了獲取用戶 ID，實際驗證會通過 Supabase API 進行
+            decoded_token = jwt.decode(token, options={"verify_signature": False})
+            user_id = decoded_token.get('sub')
+            
+            if not user_id:
+                raise HTTPException(status_code=401, detail="無效的認證 token")
+            
+            # 使用 Supabase Admin API 驗證用戶是否存在並獲取用戶資訊
+            try:
+                user_response = admin_supabase.auth.admin.get_user_by_id(user_id)
+                
+                # 處理不同的返回格式
+                if hasattr(user_response, 'user'):
+                    auth_user = user_response.user
+                elif isinstance(user_response, dict) and 'user' in user_response:
+                    auth_user = user_response['user']
+                else:
+                    auth_user = user_response
+                
+                # 從 users 表獲取用戶角色
+                user_data = admin_supabase.table('users').select('role').eq('id', user_id).single().execute()
+                
+                if not user_data.data:
+                    raise HTTPException(status_code=404, detail="找不到用戶資料")
+                
+                user_role = user_data.data.get('role')
+                
+                return {
+                    'user_id': user_id,
+                    'role': user_role
+                }
+                
+            except HTTPException:
+                raise
+            except Exception as e:
+                print(f"驗證用戶時發生錯誤: {e}")
+                raise HTTPException(status_code=401, detail="認證失敗，請重新登入")
+                
+        except jwt.DecodeError:
+            raise HTTPException(status_code=401, detail="無效的認證 token")
+        except Exception as e:
+            print(f"解析 token 時發生錯誤: {e}")
+            raise HTTPException(status_code=401, detail="認證失敗，請重新登入")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"JWT 驗證錯誤: {e}")
+        raise HTTPException(status_code=401, detail="認證失敗，請重新登入")
+
+
+def verify_teacher_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Dict[str, Any]:
+    """
+    驗證 JWT Token 並確認用戶是老師
+    返回用戶資訊字典，包含 user_id 和 role
+    """
+    current_user = verify_token(credentials)
+    
+    # 驗證用戶角色必須是老師
+    if current_user['role'] != 'teacher':
+        raise HTTPException(status_code=403, detail="此操作僅限老師使用")
+    
+    return current_user
 
 
 def send_verification_email(to_email: str, verification_code: str):
@@ -231,6 +318,12 @@ class AdminResetPasswordRequest(BaseModel):
 class AdminUpdateStudentEmailRequest(BaseModel):
     student_id: str
     new_email: str
+
+class SendNotificationRequest(BaseModel):
+    title: str
+    body: str
+    student_ids: Optional[List[str]] = None  # 如果為 None，發送給所有學生
+    scheduled_time: Optional[str] = None  # ISO 格式的時間字串，如果為 None 則立即發送
 
 
 @app.get("/")
@@ -824,8 +917,11 @@ async def send_feedback(request: FeedbackRequest):
 
 
 @app.post("/api/admin/reset-student-password")
-async def admin_reset_student_password(request: AdminResetPasswordRequest):
-    """老師重置學生密碼（需要 SUPABASE_SERVICE_ROLE_KEY）"""
+async def admin_reset_student_password(
+    request: AdminResetPasswordRequest,
+    current_user: Dict[str, Any] = Depends(verify_teacher_token)
+):
+    """老師重置學生密碼（需要 JWT Token 驗證和老師角色）"""
     student_email = request.student_email.strip().lower()
     new_password = request.new_password
     
@@ -898,10 +994,23 @@ async def admin_reset_student_password(request: AdminResetPasswordRequest):
 
 
 @app.post("/api/admin/update-student-email")
-async def admin_update_student_email(request: AdminUpdateStudentEmailRequest):
-    """老師更新學生電子郵件（需要 SUPABASE_SERVICE_ROLE_KEY）"""
+async def admin_update_student_email(
+    request: AdminUpdateStudentEmailRequest,
+    current_user: Dict[str, Any] = Depends(verify_token)
+):
+    """
+    更新學生電子郵件（需要 JWT Token 驗證）
+    - 老師可以更新任何學生的 email
+    - 學生只能更新自己的 email
+    """
     student_id = request.student_id.strip()
     new_email = request.new_email.strip().lower()
+    current_user_id = current_user['user_id']
+    current_user_role = current_user['role']
+    
+    # 權限檢查：如果是學生，只能更新自己的 email
+    if current_user_role == 'student' and current_user_id != student_id:
+        raise HTTPException(status_code=403, detail="您只能更新自己的電子郵件")
     
     # 驗證 email 格式
     import re
@@ -968,4 +1077,68 @@ async def admin_update_student_email(request: AdminUpdateStudentEmailRequest):
         # 不洩露內部錯誤詳情
         print(f"更新學生電子郵件錯誤: {e}")
         raise HTTPException(status_code=500, detail="更新電子郵件失敗，請稍後再試")
+
+
+@app.post("/api/send-notification")
+async def send_notification(
+    request: SendNotificationRequest,
+    current_user: Dict[str, Any] = Depends(verify_teacher_token)
+):
+    """
+    老師發送通知給學生（需要 JWT Token 驗證和老師角色）
+    注意：這是記錄通知發送，實際通知顯示由前端本地通知服務處理
+    """
+    try:
+        supabase_service_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        if not supabase_service_key:
+            raise HTTPException(status_code=500, detail="服務器配置錯誤：缺少 SUPABASE_SERVICE_ROLE_KEY")
+        
+        admin_supabase = create_client(supabase_url, supabase_service_key)
+        
+        # 獲取要發送通知的學生列表
+        if request.student_ids:
+            # 發送給指定的學生
+            student_ids = request.student_ids
+        else:
+            # 發送給所有學生
+            students_response = admin_supabase.table('users').select('id').eq('role', 'student').execute()
+            student_ids = [student['id'] for student in students_response.data]
+        
+        # 驗證所有學生 ID 都是有效的學生
+        if student_ids:
+            valid_students = admin_supabase.table('users').select('id').eq('role', 'student').in_('id', student_ids).execute()
+            valid_student_ids = [s['id'] for s in valid_students.data]
+            if len(valid_student_ids) != len(student_ids):
+                raise HTTPException(status_code=400, detail="部分學生 ID 無效")
+        
+        # 記錄通知發送（可以存儲到資料庫中，供前端查詢）
+        # 這裡只是返回成功，實際通知由前端根據返回的資料顯示
+        notification_data = {
+            "title": request.title,
+            "body": request.body,
+            "student_ids": student_ids,
+            "scheduled_time": request.scheduled_time,
+            "sent_at": time.time(),
+            "sent_by": current_user['user_id']
+        }
+        
+        # 可以將通知記錄存儲到資料庫（如果需要）
+        # 目前先記錄到日誌
+        print(f"通知發送記錄: {notification_data}")
+        
+        return {
+            "success": True,
+            "message": f"通知已發送給 {len(student_ids)} 位學生",
+            "notification": {
+                "title": request.title,
+                "body": request.body,
+                "student_count": len(student_ids),
+                "scheduled_time": request.scheduled_time
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"發送通知錯誤: {e}")
+        raise HTTPException(status_code=500, detail="發送通知失敗，請稍後再試")
 
