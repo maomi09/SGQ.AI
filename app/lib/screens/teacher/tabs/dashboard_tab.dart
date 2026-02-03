@@ -9,7 +9,6 @@ import '../../../models/question_model.dart';
 import '../../../models/badge_model.dart';
 import '../../../utils/user_animal_helper.dart';
 import '../../../utils/error_handler.dart';
-import '../../../services/notification_service.dart';
 
 class DashboardTab extends StatefulWidget {
   const DashboardTab({super.key});
@@ -1507,18 +1506,7 @@ class _DashboardTabState extends State<DashboardTab> {
 
     await _supabaseService.createBadge(badge);
     
-    // 發送通知給學生
-    try {
-      final notificationService = NotificationService();
-      await notificationService.showNotification(
-        id: (studentId.hashCode % 2147483647).abs(),
-        title: '獲得徽章',
-        body: '恭喜您獲得${medalNames[medalType]}徽章！',
-      );
-    } catch (e) {
-      print('發送徽章通知失敗: $e');
-      // 不影響徽章授予流程，只記錄錯誤
-    }
+    // 通知會通過 Realtime 自動發送到學生端，無需在此處發送
   }
 }
 

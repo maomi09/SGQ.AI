@@ -20,11 +20,11 @@ class _StudentMainScreenState extends State<StudentMainScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       final grammarTopicProvider = Provider.of<GrammarTopicProvider>(context, listen: false);
-      grammarTopicProvider.loadTopics();
+      await grammarTopicProvider.loadTopics();
       // 初始化 Realtime 訂閱以接收即時通知
-      grammarTopicProvider.initializeRealtimeSubscription();
+      await grammarTopicProvider.initializeRealtimeSubscription();
     });
   }
 

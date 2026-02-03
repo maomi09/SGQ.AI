@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../providers/grammar_topic_provider.dart';
 import '../../services/supabase_service.dart';
-import '../../services/notification_service.dart';
 import '../../models/question_model.dart';
 import '../../models/grammar_topic_model.dart';
 import '../../utils/error_handler.dart';
@@ -192,27 +191,12 @@ class _StudentQuestionsScreenState extends State<StudentQuestionsScreen> with Si
 
     if (result != null) {
       try {
-        final isNewComment = question.teacherComment == null || question.teacherComment!.isEmpty;
-        
         await _supabaseService.updateQuestion(question.id, {
           'teacher_comment': result.isEmpty ? null : result,
           'teacher_comment_updated_at': DateTime.now().toIso8601String(),
         });
         
-        // 如果是新評語，發送通知給學生
-        if (isNewComment && result.isNotEmpty) {
-          try {
-            final notificationService = NotificationService();
-            await notificationService.showNotification(
-              id: (question.studentId.hashCode % 2147483647).abs(),
-              title: '老師給予評語',
-              body: '老師已為您的題目添加評語，快來查看吧！',
-            );
-          } catch (e) {
-            print('發送評語通知失敗: $e');
-            // 不影響評語保存流程，只記錄錯誤
-          }
-        }
+        // 通知會通過 Realtime 自動發送到學生端，無需在此處發送
         
         // 重新載入題目
         await _loadQuestions();
