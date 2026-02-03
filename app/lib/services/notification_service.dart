@@ -21,7 +21,8 @@ class NotificationService {
     tz.initializeTimeZones();
 
     // Android 初始化設定
-    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    // 使用自定義的通知圖標（必須是單色白色圖標，透明背景）
+    const androidSettings = AndroidInitializationSettings('@drawable/notification_icon');
 
     // iOS 初始化設定
     const iosSettings = DarwinInitializationSettings(
@@ -41,9 +42,6 @@ class NotificationService {
       initSettings,
       onDidReceiveNotificationResponse: _onNotificationTapped,
     );
-
-    // 請求通知權限
-    await requestPermissions();
 
     // 創建 Android 通知通道
     if (Platform.isAndroid) {
@@ -96,6 +94,7 @@ class NotificationService {
     }
 
     // Android 通知詳細設定
+    // 注意：Android 5.0+ 要求通知圖標必須是單色的（白色圖標，透明背景）
     const androidDetails = AndroidNotificationDetails(
       'high_importance_channel', // 通道 ID
       '重要通知', // 通道名稱
@@ -105,6 +104,8 @@ class NotificationService {
       showWhen: true,
       enableVibration: true,
       playSound: true,
+      icon: '@drawable/notification_icon', // 小圖標（必須是單色白色圖標）
+      largeIcon: const DrawableResourceAndroidBitmap('@mipmap/ic_launcher'), // 大圖標（可選，顯示在通知展開時）
     );
 
     // iOS 通知詳細設定
@@ -149,6 +150,8 @@ class NotificationService {
       channelDescription: '用於接收重要通知訊息',
       importance: Importance.high,
       priority: Priority.high,
+      icon: '@drawable/notification_icon', // 小圖標（必須是單色白色圖標）
+      largeIcon: const DrawableResourceAndroidBitmap('@mipmap/ic_launcher'), // 大圖標
     );
 
     // iOS 通知詳細設定

@@ -1511,7 +1511,7 @@ class _DashboardTabState extends State<DashboardTab> {
     try {
       final notificationService = NotificationService();
       await notificationService.showNotification(
-        id: DateTime.now().millisecondsSinceEpoch + studentId.hashCode,
+        id: (studentId.hashCode % 2147483647).abs(),
         title: '獲得徽章',
         body: '恭喜您獲得${medalNames[medalType]}徽章！',
       );

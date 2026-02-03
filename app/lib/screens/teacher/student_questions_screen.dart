@@ -204,7 +204,7 @@ class _StudentQuestionsScreenState extends State<StudentQuestionsScreen> with Si
           try {
             final notificationService = NotificationService();
             await notificationService.showNotification(
-              id: DateTime.now().millisecondsSinceEpoch + question.studentId.hashCode,
+              id: (question.studentId.hashCode % 2147483647).abs(),
               title: '老師給予評語',
               body: '老師已為您的題目添加評語，快來查看吧！',
             );

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'config/app_config.dart';
 import 'providers/auth_provider.dart';
 import 'providers/grammar_topic_provider.dart';
@@ -31,7 +32,30 @@ void main() async {
   // 初始化通知服務
   await NotificationService().initialize();
 
+  // 檢查是否首次啟動，如果是則請求通知權限
+  await _requestNotificationPermissionIfFirstLaunch();
+
   runApp(const MyApp());
+}
+
+/// 首次啟動時請求通知權限
+Future<void> _requestNotificationPermissionIfFirstLaunch() async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final hasRequestedPermission = prefs.getBool('notification_permission_requested') ?? false;
+    
+    if (!hasRequestedPermission) {
+      // 首次啟動，請求通知權限
+      final notificationService = NotificationService();
+      await notificationService.requestPermissions();
+      
+      // 記錄已經請求過權限
+      await prefs.setBool('notification_permission_requested', true);
+    }
+  } catch (e) {
+    print('請求通知權限失敗: $e');
+    // 不影響應用啟動，靜默失敗
+  }
 }
 
 class MyApp extends StatelessWidget {

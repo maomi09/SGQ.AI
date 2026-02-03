@@ -21,8 +21,18 @@ class _StudentMainScreenState extends State<StudentMainScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      Provider.of<GrammarTopicProvider>(context, listen: false).loadTopics();
+      final grammarTopicProvider = Provider.of<GrammarTopicProvider>(context, listen: false);
+      grammarTopicProvider.loadTopics();
+      // 初始化 Realtime 訂閱以接收即時通知
+      grammarTopicProvider.initializeRealtimeSubscription();
     });
+  }
+
+  @override
+  void dispose() {
+    // 取消 Realtime 訂閱
+    Provider.of<GrammarTopicProvider>(context, listen: false).disposeRealtimeSubscription();
+    super.dispose();
   }
 
   @override
