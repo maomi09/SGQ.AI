@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../config/app_config.dart';
 
 class ChatGPTService {
@@ -30,12 +31,20 @@ class ChatGPTService {
   }
 
   Future<String> getScaffoldingResponse(String question, int stage) async {
+    // 獲取當前用戶的 JWT Token
+    final supabase = Supabase.instance.client;
+    final session = supabase.auth.currentSession;
+    if (session == null || session.accessToken.isEmpty) {
+      throw Exception('請先登入');
+    }
+    
     final url = '$backendUrl/api/chatgpt/scaffolding';
     print('發送請求到: $url');
     final response = await http.post(
       Uri.parse(url),
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': 'Bearer ${session.accessToken}',
       },
       body: jsonEncode({
         'question': question,
@@ -56,12 +65,20 @@ class ChatGPTService {
 
   // 處理追加問題（基於對話歷史）
   Future<String> getAdditionalResponse(String userMessage, String question, int stage, List<Map<String, dynamic>> conversationHistory) async {
+    // 獲取當前用戶的 JWT Token
+    final supabase = Supabase.instance.client;
+    final session = supabase.auth.currentSession;
+    if (session == null || session.accessToken.isEmpty) {
+      throw Exception('請先登入');
+    }
+    
     final url = '$backendUrl/api/chatgpt/additional';
     print('發送追加問題請求到: $url');
     final response = await http.post(
       Uri.parse(url),
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': 'Bearer ${session.accessToken}',
       },
       body: jsonEncode({
         'user_message': userMessage,

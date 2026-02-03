@@ -332,7 +332,10 @@ async def root():
 
 
 @app.post("/api/chatgpt/scaffolding", response_model=ChatGPTResponse)
-async def get_scaffolding(request: QuestionRequest):
+async def get_scaffolding(
+    request: QuestionRequest,
+    current_user: Dict[str, Any] = Depends(verify_token)
+):
     try:
         stage_prompts = {
             1: """【階段一：認知鷹架 Prompt（Cognitive Scaffolding）】
@@ -438,7 +441,10 @@ Your scaffolding should support four dimensions:
 
 
 @app.post("/api/chatgpt/additional", response_model=ChatGPTResponse)
-async def get_additional_response(request: AdditionalQuestionRequest):
+async def get_additional_response(
+    request: AdditionalQuestionRequest,
+    current_user: Dict[str, Any] = Depends(verify_token)
+):
     try:
         print(f"[ChatGPT Additional] Stage: {request.stage}, User message: {request.user_message[:50]}...")
         
