@@ -182,6 +182,20 @@ class SupabaseService {
     }
   }
 
+  Future<bool> signInWithApple() async {
+    try {
+      await _client.auth.signInWithOAuth(
+        OAuthProvider.apple,
+        redirectTo: AppConfig.getDeepLinkUrl('login-callback'),
+        authScreenLaunchMode: LaunchMode.externalApplication,
+      );
+      return true;
+    } catch (e) {
+      print('Apple sign in error: $e');
+      return false;
+    }
+  }
+
   Future<void> signOut() async {
     try {
       // 清除所有 session 和本地存儲
@@ -1989,6 +2003,48 @@ class SupabaseService {
       print('Note: Auth user deletion may require admin privileges');
     } catch (e) {
       print('Error deleting student: $e');
+      rethrow;
+    }
+  }
+
+  // Account Management - Delete own account
+  Future<void> deleteAccount(String userId) async {
+    try {
+      // 先刪除相關資料（題目、徽章等）
+      await _client
+          .from('questions')
+          .delete()
+          .eq('student_id', userId);
+      
+      await _client
+          .from('badges')
+          .delete()
+          .eq('student_id', userId);
+
+      await _client
+          .from('user_sessions')
+          .delete()
+          .eq('student_id', userId);
+
+      await _client
+          .from('chat_messages')
+          .delete()
+          .eq('student_id', userId);
+
+      // 最後刪除 users 表中的記錄
+      await _client
+          .from('users')
+          .delete()
+          .eq('id', userId);
+
+      // 登出用戶
+      await _client.auth.signOut();
+
+      // 注意：刪除 auth.users 中的記錄需要管理員權限
+      // 這裡我們只刪除 users 表，auth.users 的記錄可能需要通過 Supabase Admin API 刪除
+      print('Note: Auth user deletion may require admin privileges');
+    } catch (e) {
+      print('Error deleting account: $e');
       rethrow;
     }
   }

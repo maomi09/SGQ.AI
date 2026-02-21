@@ -258,6 +258,27 @@ class AuthProvider with ChangeNotifier {
     }
   }
 
+  Future<bool> signInWithApple() async {
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      final success = await _supabaseService.signInWithApple();
+      
+      // signInWithOAuth 會開啟瀏覽器，所以這裡不需要等待
+      // 認證完成後會通過深度連結返回，並觸發 onAuthStateChange
+      _isLoading = false;
+      notifyListeners();
+      return success;
+    } catch (e) {
+      print('Apple sign in error: $e');
+      _currentUser = null;
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    }
+  }
+
   Future<bool> updateEmail(String newEmail) async {
     _isLoading = true;
     notifyListeners();
@@ -421,6 +442,33 @@ class AuthProvider with ChangeNotifier {
       _currentSessionId = null;
       _isLoading = false;
       notifyListeners();
+    }
+  }
+
+  Future<bool> deleteAccount() async {
+    if (_currentUser == null) {
+      _errorMessage = '無法刪除帳號：未登入';
+      notifyListeners();
+      return false;
+    }
+
+    _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      await _supabaseService.deleteAccount(_currentUser!.id);
+      _currentUser = null;
+      _currentSessionId = null;
+      _isLoading = false;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      print('Delete account error: $e');
+      _isLoading = false;
+      _errorMessage = '刪除帳號失敗：${ErrorHandler.getSafeErrorMessage(e)}';
+      notifyListeners();
+      return false;
     }
   }
 

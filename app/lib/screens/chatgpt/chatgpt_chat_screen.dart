@@ -8,6 +8,7 @@ import '../../services/chatgpt_service.dart';
 import '../../services/supabase_service.dart';
 import '../../models/question_model.dart';
 import '../../utils/error_handler.dart';
+import '../privacy_policy_screen.dart';
 
 class ChatGPTChatScreen extends StatefulWidget {
   const ChatGPTChatScreen({super.key});
@@ -28,6 +29,7 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
   Set<String> _shownInfoDialogForQuestions = {}; // 記錄已顯示過提示的題目 ID
 
   bool _hasCheckedQuestion = false;
+  bool _hasCheckedDataSharingConsent = false;
   
   @override
   void initState() {
@@ -36,7 +38,7 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && !_hasCheckedQuestion) {
         _hasCheckedQuestion = true;
-        _checkIfQuestionSelected();
+        _checkDataSharingConsent();
       }
     });
   }
@@ -73,6 +75,172 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
     } catch (e) {
       print('Error saving shown info dialog question: $e');
     }
+  }
+
+  // 檢查數據共享許可
+  Future<void> _checkDataSharingConsent() async {
+    if (_hasCheckedDataSharingConsent) return;
+    _hasCheckedDataSharingConsent = true;
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final hasConsented = prefs.getBool('chatgpt_data_sharing_consent') ?? false;
+      
+      if (!hasConsented && mounted) {
+        _showDataSharingConsentDialog();
+      } else {
+        _checkIfQuestionSelected();
+      }
+    } catch (e) {
+      print('Error checking data sharing consent: $e');
+      // 如果檢查失敗，繼續正常流程
+      _checkIfQuestionSelected();
+    }
+  }
+
+  // 顯示數據共享許可對話框
+  void _showDataSharingConsentDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.privacy_tip, color: Colors.blue),
+              SizedBox(width: 8),
+              Expanded(child: Text('數據共享許可')),
+            ],
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  '為了提供 ChatGPT AI 輔助功能，我們需要將以下資料傳送給 OpenAI（ChatGPT 服務提供者）：',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  '共享的資料類型：',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 8),
+                const Text('• 您創建的題目內容（包括題目文字、選項、正確答案）'),
+                const Text('• 您與 AI 的對話歷史記錄'),
+                const Text('• 題目的文法主題資訊'),
+                const Text('• 當前學習階段資訊'),
+                const SizedBox(height: 16),
+                const Text(
+                  '資料接收方：',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 8),
+                const Text('• OpenAI（ChatGPT 服務提供者）'),
+                const Text('• 隱私權政策：https://openai.com/policies/privacy-policy'),
+                const SizedBox(height: 16),
+                const Text(
+                  '資料用途：',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 8),
+                const Text('• 提供個人化的 AI 學習輔助和建議'),
+                const Text('• 協助您改進題目設計'),
+                const Text('• 提供階段性的學習引導'),
+                const SizedBox(height: 16),
+                const Text(
+                  '重要說明：',
+                  style: TextStyle(fontWeight: FontWeight.w600, color: Colors.orange),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  '• 我們不會將您的資料用於廣告目的',
+                  style: TextStyle(color: Colors.orange),
+                ),
+                const Text(
+                  '• 您可以在應用程式設定中隨時撤回同意',
+                  style: TextStyle(color: Colors.orange),
+                ),
+                const Text(
+                  '• 如果您不同意共享資料，將無法使用 ChatGPT AI 輔助功能',
+                  style: TextStyle(color: Colors.orange),
+                ),
+                const SizedBox(height: 16),
+                GestureDetector(
+                  onTap: () {
+                    Navigator.pop(context);
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const PrivacyPolicyScreen(),
+                      ),
+                    ).then((_) {
+                      // 返回後再次顯示許可對話框
+                      if (mounted) {
+                        _showDataSharingConsentDialog();
+                      }
+                    });
+                  },
+                  child: const Text(
+                    '查看完整隱私權政策',
+                    style: TextStyle(
+                      color: Colors.blue,
+                      decoration: TextDecoration.underline,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                // 用戶不同意，關閉對話框並返回
+                Navigator.pop(context);
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('您需要同意數據共享才能使用 ChatGPT AI 輔助功能'),
+                    duration: Duration(seconds: 3),
+                  ),
+                );
+              },
+              child: const Text('不同意'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                // 用戶同意，保存許可並繼續
+                try {
+                  final prefs = await SharedPreferences.getInstance();
+                  await prefs.setBool('chatgpt_data_sharing_consent', true);
+                  if (mounted) {
+                    Navigator.pop(context);
+                    _checkIfQuestionSelected();
+                  }
+                } catch (e) {
+                  print('Error saving consent: $e');
+                  if (mounted) {
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('保存許可失敗，請重試'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('同意並繼續'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   void _showStageInfoDialog(BuildContext context) {
