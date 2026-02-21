@@ -1,8 +1,11 @@
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/user_model.dart';
 import '../services/supabase_service.dart';
 import '../utils/error_handler.dart';
+
+const String _kDeletedAuthUidKey = 'deleted_auth_uid';
 
 class AuthProvider with ChangeNotifier {
   final SupabaseService _supabaseService = SupabaseService();
@@ -452,12 +455,15 @@ class AuthProvider with ChangeNotifier {
       return false;
     }
 
+    final userIdToDelete = _currentUser!.id;
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
 
     try {
-      await _supabaseService.deleteAccount(_currentUser!.id);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_kDeletedAuthUidKey, userIdToDelete);
+      await _supabaseService.deleteAccount(userIdToDelete);
       _currentUser = null;
       _currentSessionId = null;
       _isLoading = false;
@@ -683,8 +689,19 @@ class AuthProvider with ChangeNotifier {
           }
         }
         
-        // 如果 users 表中沒有記錄，從 auth metadata 創建用戶
+        // 如果 users 表中沒有記錄，檢查是否為已刪除帳號（auth 仍存在但 public.users 已刪）
         if (_currentUser == null) {
+          final prefs = await SharedPreferences.getInstance();
+          final deletedUid = prefs.getString(_kDeletedAuthUidKey);
+          if (deletedUid == user.id) {
+            await _supabaseService.signOut();
+            await prefs.remove(_kDeletedAuthUidKey);
+            _currentUser = null;
+            _currentSessionId = null;
+            _isLoading = false;
+            notifyListeners();
+            return;
+          }
           final userMetadata = user.userMetadata;
           final authEmail = user.email ?? '';
           _currentUser = UserModel(

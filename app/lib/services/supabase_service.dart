@@ -213,8 +213,17 @@ class SupabaseService {
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
           // 使用獲取的 refresh token 更新 Supabase 客戶端
-          // setSession 會自動處理 access token 和 refresh token
           await _client.auth.setSession(data['refresh_token']);
+          // Apple 僅在首次授權時回傳 email（含 relay）與姓名，之後登入不會再帶，故在此寫入避免欄位空白
+          final userId = _client.auth.currentUser?.id;
+          if (userId != null) {
+            await _syncAppleCredentialToUser(
+              userId: userId,
+              email: appleCredential.email,
+              givenName: appleCredential.givenName,
+              familyName: appleCredential.familyName,
+            );
+          }
           return true;
         } else {
           print('Apple sign in API error: ${response.statusCode} - ${response.body}');
@@ -232,6 +241,50 @@ class SupabaseService {
     } catch (e) {
       print('Apple sign in error: $e');
       return false;
+    }
+  }
+
+  /// 將 Apple 登入時取得的 email（含 relay）／姓名同步到 users 表與 auth。僅在首次授權時有值。
+  Future<void> _syncAppleCredentialToUser({
+    required String userId,
+    String? email,
+    String? givenName,
+    String? familyName,
+  }) async {
+    try {
+      final updates = <String, dynamic>{
+        'updated_at': DateTime.now().toIso8601String(),
+      };
+      if (email != null && email.trim().isNotEmpty) {
+        updates['email'] = email.trim();
+      }
+      final nameParts = [givenName, familyName]
+          .where((s) => s != null && s.toString().trim().isNotEmpty)
+          .map((s) => s.toString().trim())
+          .toList();
+      if (nameParts.isNotEmpty) {
+        updates['name'] = nameParts.join(' ');
+      }
+      if (updates.length <= 1) return;
+
+      await _client.from('users').update(updates).eq('id', userId);
+
+      final authData = <String, String>{};
+      if (nameParts.isNotEmpty) {
+        final fullName = nameParts.join(' ');
+        authData['full_name'] = fullName;
+        authData['name'] = fullName;
+      }
+      try {
+        if (email != null && email.trim().isNotEmpty) {
+          await _client.auth.updateUser(UserAttributes(email: email.trim()));
+        }
+        if (authData.isNotEmpty) {
+          await _client.auth.updateUser(UserAttributes(data: authData));
+        }
+      } catch (_) {}
+    } catch (e) {
+      print('_syncAppleCredentialToUser error: $e');
     }
   }
 

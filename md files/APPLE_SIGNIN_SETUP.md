@@ -84,6 +84,10 @@
 5. 填寫以下資訊：
    - **Enabled**: 開啟
    - **Client ID (Service ID)**: 輸入步驟 1.2 建立的 Service ID（例如：`com.sgqai.app.supabase`）
+   - **Authorized Client IDs**（若有此欄位）：必須填入 **iOS App 的 Bundle ID**（`com.sgqai.app`）。  
+     - 原生 iOS 登入時，Apple 回傳的 id_token 的 audience 為 Bundle ID，非 Service ID。  
+     - 若未在此填入 Bundle ID，會出現錯誤：`Unacceptable audience in id_token: [com.sgqai.app]`。  
+     - 若畫面上為單一欄位且僅能填一個值，請依 Supabase 當時介面為準（必要時可填 Bundle ID 以支援原生 iOS，或聯絡 Supabase 文件確認多平台並存設定）。
    - **Team ID**: 在 Apple Developer Portal 右上角可以找到（10 個字元的字串）
    - **Key ID**: 輸入步驟 1.3 記錄的 Key ID
    - **Private Key**: 貼上步驟 1.3 下載的 `.p8` 檔案內容
@@ -186,25 +190,34 @@ Sign in with Apple 在 Android 上也可以使用，但需要額外配置。
 - 確認 Supabase 中的 Client ID (Service ID) 與 Apple Developer 中的 Service ID 完全一致
 - 確認 Service ID 已正確配置 Sign In with Apple
 
-### Q2: 出現 "Invalid redirect_uri" 錯誤
+### Q2: 出現 "Unacceptable audience in id_token: [com.sgqai.app]"
+
+**原因**：iOS 原生 Sign in with Apple 回傳的 id_token 其 audience 為 **Bundle ID**（`com.sgqai.app`），而 Supabase 預設僅以 Service ID 驗證，導致拒絕。
+
+**解決方案**：
+- 在 Supabase Dashboard > **Authentication** > **Providers** > **Apple** 中，找到 **Authorized Client IDs**（或類似名稱，如 **Client IDs**）欄位
+- 將 iOS App 的 Bundle ID（`com.sgqai.app`）加入。若欄位可填多個值，以逗號分隔（例如：`com.sgqai.app.supabase,com.sgqai.app`），讓 OAuth（Web/Android）與原生 iOS 並存
+- 儲存後重新嘗試 Apple 登入
+
+### Q3: 出現 "Invalid redirect_uri" 錯誤
 
 **解決方案**：
 - 確認 Supabase Redirect URLs 中包含 `com.sgqai.app://login-callback`
 - 確認 Apple Developer 中的 Return URLs 包含 Supabase callback URL
 
-### Q3: iOS 模擬器無法使用 Sign in with Apple
+### Q4: iOS 模擬器無法使用 Sign in with Apple
 
 **解決方案**：
 - Sign in with Apple 在模擬器上可能無法正常工作
 - 請在實體 iOS 設備上測試
 
-### Q4: 私鑰格式錯誤
+### Q5: 私鑰格式錯誤
 
 **解決方案**：
 - 確認 `.p8` 檔案內容包含完整的 `-----BEGIN PRIVATE KEY-----` 和 `-----END PRIVATE KEY-----`
 - 確認沒有額外的空格或換行
 
-### Q5: Team ID 找不到
+### Q6: Team ID 找不到
 
 **解決方案**：
 - 在 Apple Developer Portal 右上角點擊您的帳號名稱
