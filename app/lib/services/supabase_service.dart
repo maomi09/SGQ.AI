@@ -1,6 +1,8 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'dart:io' show Platform;
+import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import '../models/user_model.dart';
 import '../models/grammar_topic_model.dart';
 import '../models/question_model.dart';
@@ -184,12 +186,49 @@ class SupabaseService {
 
   Future<bool> signInWithApple() async {
     try {
-      await _client.auth.signInWithOAuth(
-        OAuthProvider.apple,
-        redirectTo: AppConfig.getDeepLinkUrl('login-callback'),
-        authScreenLaunchMode: LaunchMode.externalApplication,
-      );
-      return true;
+      // 在 iOS 上使用原生 Sign in with Apple（直接彈出視窗）
+      if (Platform.isIOS) {
+        // 使用原生 Sign in with Apple
+        final appleCredential = await SignInWithApple.getAppleIDCredential(
+          scopes: [
+            AppleIDAuthorizationScopes.email,
+            AppleIDAuthorizationScopes.fullName,
+          ],
+        );
+
+        // 使用 HTTP 請求直接調用 Supabase API 進行認證
+        final supabaseUrl = AppConfig.supabaseUrl;
+        final response = await http.post(
+          Uri.parse('$supabaseUrl/auth/v1/token?grant_type=id_token'),
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': AppConfig.supabaseAnonKey,
+          },
+          body: jsonEncode({
+            'provider': 'apple',
+            'id_token': appleCredential.identityToken,
+          }),
+        );
+
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          // 使用獲取的 refresh token 更新 Supabase 客戶端
+          // setSession 會自動處理 access token 和 refresh token
+          await _client.auth.setSession(data['refresh_token']);
+          return true;
+        } else {
+          print('Apple sign in API error: ${response.statusCode} - ${response.body}');
+          return false;
+        }
+      } else {
+        // Android 或其他平台使用 OAuth 流程（開啟瀏覽器）
+        await _client.auth.signInWithOAuth(
+          OAuthProvider.apple,
+          redirectTo: AppConfig.getDeepLinkUrl('login-callback'),
+          authScreenLaunchMode: LaunchMode.externalApplication,
+        );
+        return true;
+      }
     } catch (e) {
       print('Apple sign in error: $e');
       return false;
