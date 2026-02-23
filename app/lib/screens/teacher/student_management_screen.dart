@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../services/supabase_service.dart';
 import '../../utils/error_handler.dart';
+import '../../widgets/liquid_glass_back_button.dart';
 
 class StudentManagementScreen extends StatefulWidget {
   const StudentManagementScreen({super.key});
@@ -412,6 +413,7 @@ class _StudentManagementScreenState extends State<StudentManagementScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        leading: const LiquidGlassBackButton(color: Colors.white),
         title: const Text('管理學生帳號'),
         backgroundColor: Colors.green.shade600,
         foregroundColor: Colors.white,

@@ -218,31 +218,7 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
       }
       _cancelEditing();
     } else {
-      // 檢查該課程是否已有題目
-      final currentQuestions = grammarTopicProvider.selectedTopic != null
-          ? questionProvider.questions
-              .where((q) => q.grammarTopicId == grammarTopicProvider.selectedTopic!.id)
-              .toList()
-          : <QuestionModel>[];
-      
-      if (currentQuestions.isNotEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('每個課程只能創建一個題目，請先刪除現有題目'),
-              backgroundColor: Colors.orange,
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-              duration: const Duration(seconds: 3),
-            ),
-          );
-        }
-        return;
-      }
-      
-      // 建立新題目
+      // 建立新題目（每個文法主題可建立多題，無上限）
       final question = QuestionModel(
         id: '',
         studentId: authProvider.currentUser!.id,
@@ -1001,8 +977,7 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
       ),
       ),
       floatingActionButton: grammarTopicProvider.selectedTopic != null && 
-          _editingQuestion == null &&
-          currentQuestions.isEmpty
+          _editingQuestion == null
           ? FloatingActionButton(
               onPressed: () => _showAddQuestionDialog(context),
               backgroundColor: Colors.green.shade600,
@@ -1014,31 +989,6 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
   }
 
   void _showAddQuestionDialog(BuildContext context) {
-    // 檢查該課程是否已有題目
-    final grammarTopicProvider = Provider.of<GrammarTopicProvider>(context, listen: false);
-    final questionProvider = Provider.of<QuestionProvider>(context, listen: false);
-    
-    final currentQuestions = grammarTopicProvider.selectedTopic != null
-        ? questionProvider.questions
-            .where((q) => q.grammarTopicId == grammarTopicProvider.selectedTopic!.id)
-            .toList()
-        : <QuestionModel>[];
-    
-    if (currentQuestions.isNotEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('每個課程只能創建一個題目，請先刪除現有題目'),
-          backgroundColor: Colors.orange,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
-          ),
-          duration: const Duration(seconds: 3),
-        ),
-      );
-      return;
-    }
-    
     // 重置表單
     _cancelEditing();
     

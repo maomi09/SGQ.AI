@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
+import '../widgets/liquid_glass_back_button.dart';
 
 class AccountDeletionScreen extends StatefulWidget {
   const AccountDeletionScreen({super.key});
@@ -105,6 +106,7 @@ class _AccountDeletionScreenState extends State<AccountDeletionScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        leading: const LiquidGlassBackButton(color: Colors.white),
         title: const Text('刪除帳號'),
         backgroundColor: Colors.red.shade400,
         foregroundColor: Colors.white,

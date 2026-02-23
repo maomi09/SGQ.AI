@@ -4,6 +4,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'dart:convert';
 import '../config/app_config.dart';
 import '../utils/error_handler.dart';
+import '../widgets/liquid_glass_back_button.dart';
 
 class ReportBugScreen extends StatefulWidget {
   const ReportBugScreen({super.key});
@@ -140,6 +141,7 @@ class _ReportBugScreenState extends State<ReportBugScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        leading: const LiquidGlassBackButton(color: Colors.white),
         title: const Text('回報錯誤'),
         backgroundColor: Colors.green.shade400,
         foregroundColor: Colors.white,
