@@ -367,6 +367,12 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
     print('_checkIfQuestionSelected called');
     
     final questionProvider = Provider.of<QuestionProvider>(context, listen: false);
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final studentId = authProvider.currentUser?.id;
+    if (studentId != null) {
+      await questionProvider.loadQuestions(studentId);
+      if (mounted) setState(() {});
+    }
     final questions = questionProvider.questions;
     
     print('Questions count: ${questions.length}');
@@ -382,8 +388,6 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
     
     // 檢查是否有已選中的題目（從 ChatProvider）
     final chatProvider = Provider.of<ChatProvider>(context, listen: false);
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    final studentId = authProvider.currentUser?.id;
     
     print('chatProvider.currentQuestionId: ${chatProvider.currentQuestionId}');
     print('studentId: $studentId');
@@ -704,6 +708,15 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
     } catch (e) {
       print('Error reloading question data: $e');
       // 如果載入失敗，繼續使用現有的 _currentQuestion
+    }
+
+    if (_currentQuestion!.question.trim().isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('題目內容為空，請先在出題區填寫題目後再送出')),
+        );
+      }
+      return;
     }
 
     final chatProvider = Provider.of<ChatProvider>(context, listen: false);

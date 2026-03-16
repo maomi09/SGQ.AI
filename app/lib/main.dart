@@ -9,6 +9,7 @@ import 'providers/grammar_topic_provider.dart';
 import 'providers/question_provider.dart';
 import 'providers/badge_provider.dart';
 import 'providers/chat_provider.dart';
+import 'providers/ai_chat_settings_provider.dart';
 import 'services/notification_service.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/auth/forgot_password_screen.dart';
@@ -70,20 +71,61 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => QuestionProvider()),
         ChangeNotifierProvider(create: (_) => BadgeProvider()),
         ChangeNotifierProvider(create: (_) => ChatProvider()),
+        ChangeNotifierProvider(create: (_) => AiChatSettingsProvider()),
       ],
-      child: MaterialApp(
-        title: 'SGQ 學習系統',
-        theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
-          useMaterial3: true,
-        ),
-        home: const AuthWrapper(),
-        routes: {
-          '/login': (context) => const LoginScreen(),
-          '/forgot-password': (context) => const ForgotPasswordScreen(),
-          '/reset-password': (context) => const ResetPasswordScreen(),
-        },
+      child: const _LifecycleWatcher(),
+    );
+  }
+}
+
+/// 監聽 App lifecycle，負責在學生使用時自動建立/結束 session
+class _LifecycleWatcher extends StatefulWidget {
+  const _LifecycleWatcher();
+
+  @override
+  State<_LifecycleWatcher> createState() => _LifecycleWatcherState();
+}
+
+class _LifecycleWatcherState extends State<_LifecycleWatcher> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    if (state == AppLifecycleState.resumed) {
+      authProvider.handleAppResumed();
+    } else if (state == AppLifecycleState.inactive ||
+               state == AppLifecycleState.paused ||
+               state == AppLifecycleState.detached) {
+      authProvider.handleAppPaused();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'SGQ 學習系統',
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+        useMaterial3: true,
       ),
+      home: const AuthWrapper(),
+      routes: {
+        '/login': (context) => const LoginScreen(),
+        '/forgot-password': (context) => const ForgotPasswordScreen(),
+        '/reset-password': (context) => const ResetPasswordScreen(),
+      },
     );
   }
 }

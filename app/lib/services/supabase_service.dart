@@ -1857,8 +1857,8 @@ class SupabaseService {
         if (activeSessions.containsKey(studentId)) {
           final startTime = activeSessions[studentId]!;
           final difference = now.difference(startTime);
-          // 如果 session 在最近 30 分鐘內開始，認為學生在線
-          statusMap[studentId] = difference.inMinutes < 30;
+          // 如果 session 在最近 1 分鐘內開始，認為學生在線
+          statusMap[studentId] = difference.inMinutes < 1;
         } else {
           statusMap[studentId] = false;
         }

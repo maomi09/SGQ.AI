@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../providers/grammar_topic_provider.dart';
 import '../../../providers/auth_provider.dart';
+import '../../../providers/ai_chat_settings_provider.dart';
 import '../../../services/supabase_service.dart';
 import '../../../models/reminder_model.dart';
 import '../../../utils/user_animal_helper.dart';
@@ -147,26 +148,31 @@ class _RemindersTabState extends State<RemindersTab> {
                     ),
                   ),
                   // 右側圖標
-                  Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.stars),
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => const BadgesScreen(),
+                  Consumer<AiChatSettingsProvider>(
+                    builder: (context, aiSettings, _) {
+                      return Row(
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.stars),
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => const BadgesScreen(),
+                                ),
+                              );
+                            },
+                          ),
+                          if (aiSettings.isEnabled)
+                            IconButton(
+                              icon: const Icon(Icons.chat),
+                              onPressed: () {
+                                showChatDialog(context);
+                              },
                             ),
-                          );
-                        },
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.chat),
-                        onPressed: () {
-                          showChatDialog(context);
-                        },
-                      ),
-                    ],
+                        ],
+                      );
+                    },
                   ),
                 ],
               ),

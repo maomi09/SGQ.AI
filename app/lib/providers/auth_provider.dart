@@ -764,5 +764,41 @@ class AuthProvider with ChangeNotifier {
       notifyListeners();
     }
   }
+
+  /// App 重新回到前景時呼叫，確保學生有一個活動中的 session
+  Future<void> handleAppResumed() async {
+    if (_currentUser == null || _currentUser!.role != 'student') return;
+    try {
+      // 檢查是否已有活動的 session
+      final activeSessionId = await _supabaseService.getActiveSessionId(_currentUser!.id);
+      if (activeSessionId == null) {
+        _currentSessionId = await _supabaseService.createSession(_currentUser!.id);
+        print('handleAppResumed: created new session for student ${_currentUser!.id}, session ID: $_currentSessionId');
+      } else {
+        _currentSessionId = activeSessionId;
+        print('handleAppResumed: found existing active session for student ${_currentUser!.id}, session ID: $_currentSessionId');
+      }
+    } catch (e) {
+      print('handleAppResumed error: $e');
+    }
+  }
+
+  /// App 進入背景 / 關閉時呼叫，將目前學生的 session 結束
+  Future<void> handleAppPaused() async {
+    if (_currentUser == null || _currentUser!.role != 'student') return;
+    try {
+      if (_currentSessionId != null) {
+        await _supabaseService.endSession(_currentSessionId!);
+        print('handleAppPaused: ended session for student ${_currentUser!.id}, session ID: $_currentSessionId');
+        _currentSessionId = null;
+      } else {
+        // 防守性處理：結束所有未結束的 session，避免遺漏
+        await _supabaseService.endAllActiveSessions(_currentUser!.id);
+        print('handleAppPaused: ended all active sessions for student ${_currentUser!.id}');
+      }
+    } catch (e) {
+      print('handleAppPaused error: $e');
+    }
+  }
 }
 

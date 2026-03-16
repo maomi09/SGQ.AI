@@ -125,9 +125,12 @@ class _StatisticsTabState extends State<StatisticsTab> {
   Widget build(BuildContext context) {
     final authProvider = Provider.of<AuthProvider>(context);
     final user = authProvider.currentUser;
+    final viewInsets = MediaQuery.of(context).viewInsets;
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
 
     return Scaffold(
       backgroundColor: Colors.transparent,
+      resizeToAvoidBottomInset: false,
       body: SafeArea(
         child: Container(
           decoration: BoxDecoration(
@@ -256,7 +259,7 @@ class _StatisticsTabState extends State<StatisticsTab> {
                       padding: EdgeInsets.only(
                         left: 20,
                         right: 20,
-                        bottom: MediaQuery.of(context).padding.bottom + 100,
+                        bottom: viewInsets.bottom + bottomPadding + 100,
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,

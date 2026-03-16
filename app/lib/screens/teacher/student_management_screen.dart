@@ -494,15 +494,16 @@ class _StudentManagementScreenState extends State<StudentManagementScreen> {
                                   onPressed: () => _showResetPasswordDialog(student),
                                   tooltip: '重置密碼',
                                 ),
-                                IconButton(
-                                  icon: const Icon(Icons.delete),
-                                  color: Colors.red,
-                                  onPressed: () => _deleteStudent(
-                                    student['id'] as String,
-                                    student['name'] ?? '未設定姓名',
-                                  ),
-                                  tooltip: '刪除帳號',
-                                ),
+                                // 刪除功能暫時關閉：若需重新開啟，請恢復下方按鈕
+                                // IconButton(
+                                //   icon: const Icon(Icons.delete),
+                                //   color: Colors.red,
+                                //   onPressed: () => _deleteStudent(
+                                //     student['id'] as String,
+                                //     student['name'] ?? '未設定姓名',
+                                //   ),
+                                //   tooltip: '刪除帳號',
+                                // ),
                               ],
                             ),
                           ),

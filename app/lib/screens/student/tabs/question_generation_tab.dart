@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../providers/grammar_topic_provider.dart';
+import '../../../providers/ai_chat_settings_provider.dart';
 import '../../../providers/question_provider.dart';
 import '../../../providers/auth_provider.dart';
 import '../../../models/question_model.dart';
@@ -34,6 +35,7 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
       _loadQuestions();
     });
   }
+
 
   String? _lastLoadedTopicId;
   
@@ -323,22 +325,32 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
             .toList()
         : <QuestionModel>[];
 
-    return Scaffold(
-      body: SafeArea(
-        child: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                Colors.green.shade50,
-                Colors.green.shade100,
-                Colors.white,
-              ],
+    final viewInsets = MediaQuery.of(context).viewInsets;
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
+
+    final Widget scaffoldBody = SafeArea(
+      child: SingleChildScrollView(
+            padding: EdgeInsets.only(
+              bottom: viewInsets.bottom + bottomPadding + 100,
             ),
-          ),
-          child: Column(
-            children: [
+            child: Container(
+            constraints: BoxConstraints(
+              minHeight: MediaQuery.of(context).size.height - MediaQuery.of(context).padding.top - MediaQuery.of(context).padding.bottom - 100,
+            ),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Colors.green.shade50,
+                  Colors.green.shade100,
+                  Colors.white,
+                ],
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
             // 頂部區域
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
@@ -402,26 +414,31 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
                     ),
                   ),
                   // 右側圖標
-                  Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.stars),
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => const BadgesScreen(),
+                  Consumer<AiChatSettingsProvider>(
+                    builder: (context, aiSettings, _) {
+                      return Row(
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.stars),
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => const BadgesScreen(),
+                                ),
+                              );
+                            },
+                          ),
+                          if (aiSettings.isEnabled)
+                            IconButton(
+                              icon: const Icon(Icons.chat),
+                              onPressed: () {
+                                showChatDialog(context);
+                              },
                             ),
-                          );
-                        },
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.chat),
-                        onPressed: () {
-                          showChatDialog(context);
-                        },
-                      ),
-                    ],
+                        ],
+                      );
+                    },
                   ),
                 ],
               ),
@@ -564,56 +581,58 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
               ),
             const SizedBox(height: 24),
             // 內容區域
-            Expanded(
-              child: grammarTopicProvider.selectedTopic == null
-                  ? Center(
-                      child: Text(
-                        '請先選擇文法主題',
+            if (grammarTopicProvider.selectedTopic == null)
+              SizedBox(
+                height: 240,
+                child: Center(
+                  child: Text(
+                    '請先選擇文法主題',
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                ),
+              )
+            else if (currentQuestions.isEmpty && _editingQuestion == null)
+              SizedBox(
+                height: 280,
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.quiz_outlined,
+                        size: 64,
+                        color: Colors.grey[400],
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        '尚無題目',
                         style: TextStyle(
-                          fontSize: 16,
+                          fontSize: 18,
                           color: Colors.grey[600],
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
-                    )
-                  : currentQuestions.isEmpty && _editingQuestion == null
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.quiz_outlined,
-                                size: 64,
-                                color: Colors.grey[400],
-                              ),
-                              const SizedBox(height: 16),
-                              Text(
-                                '尚無題目',
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  color: Colors.grey[600],
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                '點擊右下角 + 號新增題目',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey[500],
-                                ),
-                              ),
-                            ],
-                          ),
-                        )
-                      : SingleChildScrollView(
-                          padding: EdgeInsets.only(
-                            left: 20,
-                            right: 20,
-                            bottom: MediaQuery.of(context).padding.bottom + 100,
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
+                      const SizedBox(height: 8),
+                      Text(
+                        '點擊右下角 + 號新增題目',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.grey[500],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
                               // 編輯表單（如果有正在編輯的題目）
                               if (_editingQuestion != null) ...[
                                 Container(
@@ -969,13 +988,16 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
                               }),
                               const SizedBox(height: 20),
                             ],
-                          ),
-                        ),
-            ),
+                ),
+              ),
           ],
         ),
       ),
       ),
+    );
+    return Scaffold(
+      resizeToAvoidBottomInset: false,
+      body: scaffoldBody,
       floatingActionButton: grammarTopicProvider.selectedTopic != null && 
           _editingQuestion == null
           ? FloatingActionButton(

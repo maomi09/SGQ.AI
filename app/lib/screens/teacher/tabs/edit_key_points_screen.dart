@@ -143,6 +143,109 @@ class _EditKeyPointsScreenState extends State<EditKeyPointsScreen> {
     }
   }
 
+  Future<void> _editKeyPoint(GrammarKeyPointModel point) async {
+    final titleController = TextEditingController(text: point.title);
+    final contentController = TextEditingController(text: point.content);
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => Dialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Container(
+          width: MediaQuery.of(context).size.width * 0.9,
+          constraints: const BoxConstraints(maxWidth: 500),
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.edit, color: Colors.orange.shade600),
+                  const SizedBox(width: 8),
+                  const Text(
+                    '編輯文法重點',
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Color(0xFF1F2937),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+              TextField(
+                controller: titleController,
+                decoration: InputDecoration(
+                  labelText: '標題',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  filled: true,
+                  fillColor: Colors.grey.shade50,
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: contentController,
+                decoration: InputDecoration(
+                  labelText: '內容',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  filled: true,
+                  fillColor: Colors.grey.shade50,
+                ),
+                maxLines: 5,
+              ),
+              const SizedBox(height: 24),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    child: Text(
+                      '取消',
+                      style: TextStyle(
+                        color: Colors.grey[600],
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  ElevatedButton(
+                    onPressed: () => Navigator.pop(context, true),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.orange.shade600,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text('儲存變更'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (result == true && titleController.text.isNotEmpty) {
+      await _supabaseService.updateGrammarKeyPoint(
+        point.id,
+        titleController.text,
+        contentController.text,
+        point.order,
+      );
+      _loadKeyPoints();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Dialog(
@@ -211,28 +314,31 @@ class _EditKeyPointsScreenState extends State<EditKeyPointsScreen> {
                               child: Row(
                                 children: [
                                   Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          point.title,
-                                          style: const TextStyle(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.bold,
-                                            color: Color(0xFF1F2937),
-                                          ),
-                                        ),
-                                        if (point.content.isNotEmpty) ...[
-                                          const SizedBox(height: 8),
+                                    child: GestureDetector(
+                                      onTap: () => _editKeyPoint(point),
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
                                           Text(
-                                            point.content,
-                                            style: TextStyle(
-                                              fontSize: 14,
-                                              color: Colors.grey[700],
+                                            point.title,
+                                            style: const TextStyle(
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.bold,
+                                              color: Color(0xFF1F2937),
                                             ),
                                           ),
+                                          if (point.content.isNotEmpty) ...[
+                                            const SizedBox(height: 8),
+                                            Text(
+                                              point.content,
+                                              style: TextStyle(
+                                                fontSize: 14,
+                                                color: Colors.grey[700],
+                                              ),
+                                            ),
+                                          ],
                                         ],
-                                      ],
+                                      ),
                                     ),
                                   ),
                                   IconButton(
