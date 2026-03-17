@@ -1495,7 +1495,11 @@ class SupabaseService {
           final studentsList = functionResponse as List;
           if (studentsList.isNotEmpty) {
             print('Using get_all_students function, found ${studentsList.length} students');
-            final studentsResponse = studentsList;
+            // 排除不納入統計的帳號（例如開發者/測試帳號）
+            final studentsResponse = studentsList.where((s) {
+              final exclude = s is Map<String, dynamic> ? (s['exclude_from_stats'] == true) : false;
+              return !exclude;
+            }).toList();
           
           // 查詢所有學生的題目資料（包含 completed_stages），按 updated_at 降序排序
           final questionsResponse = await _client
@@ -1569,8 +1573,9 @@ class SupabaseService {
       print('Attempting direct query to users table...');
       final studentsResponse = await _client
           .from('users')
-          .select('id, name, student_id, email, created_at')
-          .eq('role', 'student');
+          .select('id, name, student_id, email, created_at, exclude_from_stats')
+          .eq('role', 'student')
+          .or('exclude_from_stats.is.null,exclude_from_stats.eq.false');
       
       final studentsList = studentsResponse as List;
       print('Students query result: ${studentsList.length} students found');
@@ -1726,11 +1731,14 @@ class SupabaseService {
   // Session Management - 創建新的 session
   Future<String?> createSession(String studentId) async {
     try {
+      final nowIso = DateTime.now().toIso8601String();
       final response = await _client
           .from('user_sessions')
           .insert({
             'student_id': studentId,
-            'start_time': DateTime.now().toIso8601String(),
+            'start_time': nowIso,
+            // 讓老師端立刻有可用的心跳值；後續會由 Timer 每 10 秒更新
+            'last_heartbeat': nowIso,
           })
           .select()
           .single();
@@ -1742,13 +1750,34 @@ class SupabaseService {
     }
   }
 
+  // Session Management - 更新 session 心跳（供老師端「上線中」判斷使用）
+  //
+  // 需要 user_sessions 表有 last_heartbeat 欄位（timestamp/timestamptz）。
+  // 若後端尚未新增欄位或權限不足，這個更新會失敗；呼叫端應視為非致命錯誤。
+  Future<bool> updateSessionHeartbeat({
+    required String sessionId,
+    required DateTime heartbeatTime,
+  }) async {
+    try {
+      await _client
+          .from('user_sessions')
+          .update({'last_heartbeat': heartbeatTime.toIso8601String()})
+          .eq('id', sessionId);
+      return true;
+    } catch (e) {
+      // 心跳更新失敗不應影響主要流程，但要把錯誤留給呼叫端做診斷
+      print('Error updating session heartbeat: $e');
+      return false;
+    }
+  }
+
   // Session Management - 結束 session
-  Future<void> endSession(String sessionId) async {
+  Future<void> endSession(String sessionId, {DateTime? endTime}) async {
     try {
       await _client
           .from('user_sessions')
           .update({
-            'end_time': DateTime.now().toIso8601String(),
+            'end_time': (endTime ?? DateTime.now()).toIso8601String(),
           })
           .eq('id', sessionId);
     } catch (e) {
@@ -1778,13 +1807,32 @@ class SupabaseService {
     }
   }
 
+  /// 取得目前未結束 session 的關鍵資訊（用於避免重複建立 session 與「爆時數」）。
+  /// 回傳：{ id, start_time, last_heartbeat }
+  Future<Map<String, dynamic>?> getActiveSessionInfo(String studentId) async {
+    try {
+      final response = await _client
+          .from('user_sessions')
+          .select('id, start_time, last_heartbeat')
+          .eq('student_id', studentId)
+          .isFilter('end_time', null)
+          .order('start_time', ascending: false)
+          .limit(1)
+          .maybeSingle();
+      return response;
+    } catch (e) {
+      print('Error getting active session info: $e');
+      return null;
+    }
+  }
+
   // Session Management - 結束所有未結束的 session（用於登出或應用程式關閉時）
-  Future<void> endAllActiveSessions(String studentId) async {
+  Future<void> endAllActiveSessions(String studentId, {DateTime? endTime}) async {
     try {
       await _client
           .from('user_sessions')
           .update({
-            'end_time': DateTime.now().toIso8601String(),
+            'end_time': (endTime ?? DateTime.now()).toIso8601String(),
           })
           .eq('student_id', studentId)
           .isFilter('end_time', null);
@@ -1830,35 +1878,37 @@ class SupabaseService {
       // 獲取所有未結束的 session
       final response = await _client
           .from('user_sessions')
-          .select('student_id, start_time')
+          .select('student_id, start_time, last_heartbeat')
           .inFilter('student_id', studentIds)
           .isFilter('end_time', null);
       
       final now = DateTime.now();
-      final activeSessions = <String, DateTime>{};
+      final latestSignals = <String, DateTime>{};
       
       // 處理響應（確保是 List）
       final sessions = (response as List).cast<Map<String, dynamic>>();
       
       for (var session in sessions) {
         final studentId = session['student_id'] as String;
-        final startTimeStr = session['start_time'] as String;
-        final startTime = DateTime.parse(startTimeStr);
+        final String? heartbeatStr = session['last_heartbeat'] as String?;
+        final DateTime signalTime = heartbeatStr != null
+            ? DateTime.parse(heartbeatStr)
+            : DateTime.parse(session['start_time'] as String);
         
         // 如果這個學生已經有更近期的 session，保留更近期的
-        if (!activeSessions.containsKey(studentId) || 
-            startTime.isAfter(activeSessions[studentId]!)) {
-          activeSessions[studentId] = startTime;
+        if (!latestSignals.containsKey(studentId) ||
+            signalTime.isAfter(latestSignals[studentId]!)) {
+          latestSignals[studentId] = signalTime;
         }
       }
       
       // 檢查每個學生的狀態
       for (var studentId in studentIds) {
-        if (activeSessions.containsKey(studentId)) {
-          final startTime = activeSessions[studentId]!;
-          final difference = now.difference(startTime);
-          // 如果 session 在最近 1 分鐘內開始，認為學生在線
-          statusMap[studentId] = difference.inMinutes < 1;
+        if (latestSignals.containsKey(studentId)) {
+          final signalTime = latestSignals[studentId]!;
+          final difference = now.difference(signalTime);
+          // 10 秒更新一次心跳；允許一些網路/排程延遲
+          statusMap[studentId] = difference.inSeconds < 25;
         } else {
           statusMap[studentId] = false;
         }

@@ -86,30 +86,38 @@ class _LifecycleWatcher extends StatefulWidget {
   State<_LifecycleWatcher> createState() => _LifecycleWatcherState();
 }
 
-class _LifecycleWatcherState extends State<_LifecycleWatcher> with WidgetsBindingObserver {
+class _LifecycleWatcherState extends State<_LifecycleWatcher> {
+  AppLifecycleListener? _lifecycleListener;
+
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
+    // 使用 AppLifecycleListener（比 WidgetsBindingObserver 更直接，符合統計需求）
+    _lifecycleListener = AppLifecycleListener(
+      onResume: () {
+        final authProvider = Provider.of<AuthProvider>(context, listen: false);
+        authProvider.handleAppResumed();
+      },
+      onInactive: () {
+        final authProvider = Provider.of<AuthProvider>(context, listen: false);
+        authProvider.handleAppPaused();
+      },
+      onPause: () {
+        final authProvider = Provider.of<AuthProvider>(context, listen: false);
+        authProvider.handleAppPaused();
+      },
+      onDetach: () {
+        final authProvider = Provider.of<AuthProvider>(context, listen: false);
+        authProvider.handleAppPaused();
+      },
+    );
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
+    _lifecycleListener?.dispose();
+    _lifecycleListener = null;
     super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    super.didChangeAppLifecycleState(state);
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
-    if (state == AppLifecycleState.resumed) {
-      authProvider.handleAppResumed();
-    } else if (state == AppLifecycleState.inactive ||
-               state == AppLifecycleState.paused ||
-               state == AppLifecycleState.detached) {
-      authProvider.handleAppPaused();
-    }
   }
 
   @override

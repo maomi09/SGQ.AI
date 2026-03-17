@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/user_model.dart';
 import '../services/supabase_service.dart';
+import '../services/study_timer_manager.dart';
 import '../utils/error_handler.dart';
 
 const String _kDeletedAuthUidKey = 'deleted_auth_uid';
@@ -13,6 +14,7 @@ class AuthProvider with ChangeNotifier {
   bool _isLoading = false;
   String? _errorMessage;
   String? _currentSessionId; // 當前活動的 session ID
+  bool _isHandlingSession = false;
 
   UserModel? get currentUser => _currentUser;
   bool get isLoading => _isLoading;
@@ -420,6 +422,17 @@ class AuthProvider with ChangeNotifier {
       // 如果是學生，結束當前的 session
       if (_currentUser != null && _currentUser!.role == 'student') {
         try {
+          // 登出時：強制停止心跳並結算，同步後清空本地快取
+          try {
+            await StudyTimerManager.instance.stop(clearLocalCache: true);
+          } catch (e) {
+            // 同步失敗也要清掉本地快取，避免跨次登入污染
+            try {
+              await StudyTimerManager.instance.clearLocal();
+            } catch (_) {}
+            print('StudyTimerManager.stop(signOut) error: $e');
+          }
+
           if (_currentSessionId != null) {
             await _supabaseService.endSession(_currentSessionId!);
           } else {
@@ -670,19 +683,10 @@ class AuthProvider with ChangeNotifier {
       if (user != null) {
         _currentUser = await _supabaseService.getUser(user.id);
         
-        // 如果是學生，檢查並創建 session
+        // 如果是學生，登入成功後立刻確保有 session 並啟動心跳
         if (_currentUser != null && _currentUser!.role == 'student') {
           try {
-            // 檢查是否有活動的 session
-            final activeSessionId = await _supabaseService.getActiveSessionId(_currentUser!.id);
-            if (activeSessionId == null) {
-              // 如果沒有活動的 session，創建新的
-              _currentSessionId = await _supabaseService.createSession(_currentUser!.id);
-              print('Session created for student: ${_currentUser!.id}, session ID: $_currentSessionId');
-            } else {
-              _currentSessionId = activeSessionId;
-              print('Active session found for student: ${_currentUser!.id}, session ID: $_currentSessionId');
-            }
+            await handleAppResumed();
           } catch (e) {
             print('Error managing session in checkAuth: $e');
             // 不影響認證流程，繼續執行
@@ -768,18 +772,50 @@ class AuthProvider with ChangeNotifier {
   /// App 重新回到前景時呼叫，確保學生有一個活動中的 session
   Future<void> handleAppResumed() async {
     if (_currentUser == null || _currentUser!.role != 'student') return;
+    // 若已經有一個活動 session 且心跳正在跑，直接略過（避免啟動流程重複建 session）
+    if (_currentSessionId != null && StudyTimerManager.instance.isRunning) return;
+    if (_isHandlingSession) return;
+    _isHandlingSession = true;
     try {
-      // 檢查是否已有活動的 session
-      final activeSessionId = await _supabaseService.getActiveSessionId(_currentUser!.id);
-      if (activeSessionId == null) {
+      // 檢查是否已有活動的 session（並避免 end_time 遺漏導致「爆時數」）
+      final activeInfo = await _supabaseService.getActiveSessionInfo(_currentUser!.id);
+      final now = DateTime.now();
+
+      if (activeInfo == null) {
         _currentSessionId = await _supabaseService.createSession(_currentUser!.id);
         print('handleAppResumed: created new session for student ${_currentUser!.id}, session ID: $_currentSessionId');
       } else {
-        _currentSessionId = activeSessionId;
-        print('handleAppResumed: found existing active session for student ${_currentUser!.id}, session ID: $_currentSessionId');
+        final sessionId = activeInfo['id'] as String?;
+        final startTime = DateTime.parse(activeInfo['start_time'] as String);
+        final String? heartbeatStr = activeInfo['last_heartbeat'] as String?;
+        final signalTime = heartbeatStr != null ? DateTime.parse(heartbeatStr) : startTime;
+
+        // 若這筆未結束 session 的「最後訊號」已經太久（例如隔了很久才再開 App），
+        // 為避免把整段空窗算進去，先用 signalTime 把它安全結束，再建立新 session。
+        final isStale = now.difference(signalTime) > const Duration(minutes: 2);
+        if (sessionId == null) {
+          _currentSessionId = await _supabaseService.createSession(_currentUser!.id);
+          print('handleAppResumed: active session info missing id; created new session for student ${_currentUser!.id}, session ID: $_currentSessionId');
+        } else if (isStale) {
+          await _supabaseService.endSession(sessionId, endTime: signalTime);
+          _currentSessionId = await _supabaseService.createSession(_currentUser!.id);
+          print('handleAppResumed: stale active session ended safely and created new session for student ${_currentUser!.id}, session ID: $_currentSessionId');
+        } else {
+          _currentSessionId = sessionId;
+          print('handleAppResumed: found active session for student ${_currentUser!.id}, session ID: $_currentSessionId');
+        }
+      }
+
+      if (_currentSessionId != null) {
+        await StudyTimerManager.instance.start(
+          studentId: _currentUser!.id,
+          sessionId: _currentSessionId!,
+        );
       }
     } catch (e) {
       print('handleAppResumed error: $e');
+    } finally {
+      _isHandlingSession = false;
     }
   }
 
@@ -787,6 +823,13 @@ class AuthProvider with ChangeNotifier {
   Future<void> handleAppPaused() async {
     if (_currentUser == null || _currentUser!.role != 'student') return;
     try {
+      // 先以本地 last_heartbeat 結算並嘗試同步到後端（失敗時保留快取，讓下次補償）
+      try {
+        await StudyTimerManager.instance.stop();
+      } catch (e) {
+        print('StudyTimerManager.stop error: $e');
+      }
+
       if (_currentSessionId != null) {
         await _supabaseService.endSession(_currentSessionId!);
         print('handleAppPaused: ended session for student ${_currentUser!.id}, session ID: $_currentSessionId');

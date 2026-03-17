@@ -79,7 +79,8 @@ class _ProfileTabState extends State<ProfileTab> {
       );
     }
 
-    final aiChatSettings = Provider.of<AiChatSettingsProvider>(context);
+    final AiChatSettingsProvider? aiChatSettings =
+        user.role == 'student' ? Provider.of<AiChatSettingsProvider>(context) : null;
 
     // 如果動物還沒載入，使用基於ID的默認動物
     final displayAnimal = _userAnimal ?? UserAnimalHelper.getDefaultAnimal(user.id);
@@ -301,53 +302,55 @@ class _ProfileTabState extends State<ProfileTab> {
                       ],
                     ),
                     const SizedBox(height: 32),
-                    // AI 聊天室開關卡片（置於帳號資訊上方）
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.05),
-                            blurRadius: 8,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  'AI 小幫手聊天室',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w600,
-                                    color: Color(0xFF1F2937),
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  aiChatSettings.isEnabled
-                                      ? '已開啟，出題區會顯示 AI 聊天室按鈕'
-                                      : '已關閉，出題區隱藏 AI 聊天室按鈕',
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    color: Colors.grey[600],
-                                  ),
-                                ),
-                              ],
+                    // AI 聊天室開關卡片（僅學生顯示）
+                    if (user.role == 'student' && aiChatSettings != null) ...[
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.05),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
                             ),
-                          ),
-                          const SizedBox(width: 12),
-                          _buildAiChatToggleButton(aiChatSettings),
-                        ],
+                          ],
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'AI 小幫手聊天室',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                      color: Color(0xFF1F2937),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    aiChatSettings.isEnabled
+                                        ? '已開啟，出題區會顯示 AI 聊天室按鈕'
+                                        : '已關閉，出題區隱藏 AI 聊天室按鈕',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: Colors.grey[600],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            _buildAiChatToggleButton(aiChatSettings),
+                          ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 32),
+                      const SizedBox(height: 32),
+                    ],
                     // 帳號資訊區塊
                     const Text(
                       '帳號資訊',
@@ -387,6 +390,7 @@ class _ProfileTabState extends State<ProfileTab> {
                       title: '身分',
                       value: user.role == 'student' ? '學生' : '老師',
                     ),
+                    const SizedBox(height: 12),
                     GestureDetector(
                       onTap: () {
                         Navigator.push(
@@ -411,6 +415,7 @@ class _ProfileTabState extends State<ProfileTab> {
                           ],
                         ),
                         child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
                             Container(
                               width: 40,
@@ -428,6 +433,8 @@ class _ProfileTabState extends State<ProfileTab> {
                             const Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                mainAxisSize: MainAxisSize.min,
                                 children: [
                                   Text(
                                     '帳號管理',
