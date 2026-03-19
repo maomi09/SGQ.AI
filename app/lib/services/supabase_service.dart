@@ -2,6 +2,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:io' show Platform;
+import 'dart:math';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import '../models/user_model.dart';
 import '../models/grammar_topic_model.dart';
@@ -9,6 +10,7 @@ import '../models/question_model.dart';
 import '../models/badge_model.dart';
 import '../models/grammar_key_point_model.dart';
 import '../models/reminder_model.dart';
+import '../models/class_model.dart';
 import '../config/app_config.dart';
 
 class SupabaseService {
@@ -168,6 +170,48 @@ class SupabaseService {
       email: email.trim(),
       password: password,
     );
+  }
+
+  // 依學號查找學生 email（僅學生）
+  Future<String?> getStudentEmailByStudentId(String studentId) async {
+    final normalizedStudentId = studentId.trim();
+    if (normalizedStudentId.isEmpty) return null;
+
+    try {
+      final response = await _client
+          .from('users')
+          .select('email')
+          .eq('role', 'student')
+          .eq('student_id', normalizedStudentId)
+          .maybeSingle();
+
+      if (response == null) return null;
+      final email = (response['email'] as String?)?.trim();
+      if (email == null || email.isEmpty) return null;
+      return email;
+    } catch (e) {
+      print('Error getting email by student_id: $e');
+      return null;
+    }
+  }
+
+  // 登入分流：有 @ 當 email，否則當學號（學生）
+  Future<AuthResponse> signInWithIdentifier(String identifier, String password) async {
+    final normalized = identifier.trim();
+    if (normalized.isEmpty) {
+      throw Exception('請輸入帳號');
+    }
+
+    if (normalized.contains('@')) {
+      return await signIn(normalized, password);
+    }
+
+    final mappedEmail = await getStudentEmailByStudentId(normalized);
+    if (mappedEmail == null) {
+      throw Exception('找不到此學號對應的學生帳號');
+    }
+
+    return await signIn(mappedEmail, password);
   }
 
   Future<bool> signInWithGoogle() async {
@@ -1010,12 +1054,281 @@ class SupabaseService {
     }
   }
 
-  // Grammar Topics
-  Future<List<GrammarTopicModel>> getGrammarTopics() async {
-    final response = await _client
+  // =====================================================
+  // Class Management (班級管理)
+  // =====================================================
+
+  // 生成唯一的 6 位數字班級代碼
+  Future<String> _generateUniqueClassCode() async {
+    final random = Random();
+    String code;
+    bool exists = true;
+    
+    while (exists) {
+      // 生成 6 位數字代碼（100000-999999）
+      code = (random.nextInt(900000) + 100000).toString();
+      
+      // 檢查是否已存在
+      final response = await _client
+          .from('classes')
+          .select('id')
+          .eq('code', code)
+          .maybeSingle();
+      
+      exists = response != null;
+      
+      if (!exists) {
+        return code;
+      }
+    }
+    
+    // 這行不應該被執行到，但為了編譯器需要返回值
+    throw Exception('無法生成唯一的班級代碼');
+  }
+
+  // 獲取可管理的所有班級（共同管理模式）
+  Future<List<ClassModel>> getTeacherClasses(String teacherId) async {
+    try {
+      final response = await _client
+          .from('classes')
+          .select()
+          .order('created_at', ascending: false);
+      
+      return (response as List)
+          .map((json) => ClassModel.fromJson(json))
+          .toList();
+    } catch (e) {
+      print('Error getting teacher classes: $e');
+      return [];
+    }
+  }
+
+  // 通過代碼獲取班級
+  Future<ClassModel?> getClassByCode(String code) async {
+    try {
+      final response = await _client
+          .from('classes')
+          .select()
+          .eq('code', code)
+          .maybeSingle();
+      
+      if (response != null) {
+        return ClassModel.fromJson(response);
+      }
+      return null;
+    } catch (e) {
+      print('Error getting class by code: $e');
+      return null;
+    }
+  }
+
+  // 通過 ID 獲取班級
+  Future<ClassModel?> getClassById(String classId) async {
+    try {
+      final response = await _client
+          .from('classes')
+          .select()
+          .eq('id', classId)
+          .maybeSingle();
+      
+      if (response != null) {
+        return ClassModel.fromJson(response);
+      }
+      return null;
+    } catch (e) {
+      print('Error getting class by id: $e');
+      return null;
+    }
+  }
+
+  // 創建班級
+  Future<ClassModel?> createClass(String name, String teacherId) async {
+    try {
+      final code = await _generateUniqueClassCode();
+      final now = DateTime.now().toIso8601String();
+      
+      final response = await _client
+          .from('classes')
+          .insert({
+            'name': name,
+            'code': code,
+            'teacher_id': teacherId,
+            'created_at': now,
+            'updated_at': now,
+          })
+          .select()
+          .single();
+      
+      return ClassModel.fromJson(response);
+    } catch (e) {
+      print('Error creating class: $e');
+      return null;
+    }
+  }
+
+  // 更新班級名稱
+  Future<bool> updateClass(String classId, String name) async {
+    try {
+      await _client
+          .from('classes')
+          .update({
+            'name': name,
+            'updated_at': DateTime.now().toIso8601String(),
+          })
+          .eq('id', classId);
+      return true;
+    } catch (e) {
+      print('Error updating class: $e');
+      return false;
+    }
+  }
+
+  // 刪除班級（需先檢查是否有學生）
+  Future<bool> deleteClass(String classId) async {
+    try {
+      // 先檢查是否有學生
+      final studentsResponse = await _client
+          .from('users')
+          .select('id')
+          .eq('class_id', classId)
+          .limit(1);
+      
+      if ((studentsResponse as List).isNotEmpty) {
+        throw Exception('無法刪除班級：班級中仍有學生');
+      }
+      
+      // 刪除班級下的所有課程
+      await _client
+          .from('grammar_topics')
+          .delete()
+          .eq('class_id', classId);
+      
+      // 刪除班級
+      await _client
+          .from('classes')
+          .delete()
+          .eq('id', classId);
+      
+      return true;
+    } catch (e) {
+      print('Error deleting class: $e');
+      rethrow;
+    }
+  }
+
+  // 學生加入班級
+  Future<bool> joinClass(String studentId, String classCode) async {
+    try {
+      // 先通過代碼獲取班級
+      final classInfo = await getClassByCode(classCode);
+      if (classInfo == null) {
+        throw Exception('找不到此班級代碼');
+      }
+      
+      // 更新學生的 class_id
+      await _client
+          .from('users')
+          .update({'class_id': classInfo.id})
+          .eq('id', studentId);
+      
+      return true;
+    } catch (e) {
+      print('Error joining class: $e');
+      rethrow;
+    }
+  }
+
+  // 學生退出班級
+  Future<bool> leaveClass(String studentId) async {
+    try {
+      await _client
+          .from('users')
+          .update({'class_id': null})
+          .eq('id', studentId);
+      
+      return true;
+    } catch (e) {
+      print('Error leaving class: $e');
+      return false;
+    }
+  }
+
+  // 獲取學生所屬班級
+  Future<ClassModel?> getStudentClass(String studentId) async {
+    try {
+      // 先獲取學生的 class_id
+      final userResponse = await _client
+          .from('users')
+          .select('class_id')
+          .eq('id', studentId)
+          .maybeSingle();
+      
+      if (userResponse == null || userResponse['class_id'] == null) {
+        return null;
+      }
+      
+      // 獲取班級資訊
+      return await getClassById(userResponse['class_id'] as String);
+    } catch (e) {
+      print('Error getting student class: $e');
+      return null;
+    }
+  }
+
+  // 獲取班級的所有學生
+  Future<List<Map<String, dynamic>>> getClassStudents(String classId) async {
+    try {
+      final response = await _client
+          .from('users')
+          .select('id, name, email, student_id, created_at')
+          .eq('class_id', classId)
+          .eq('role', 'student')
+          .order('name', ascending: true);
+      
+      return (response as List).map((student) => {
+        'id': student['id'],
+        'name': student['name'],
+        'email': student['email'],
+        'student_id': student['student_id'],
+        'created_at': student['created_at'],
+      }).toList();
+    } catch (e) {
+      print('Error getting class students: $e');
+      return [];
+    }
+  }
+
+  // 獲取班級學生數量
+  Future<int> getClassStudentCount(String classId) async {
+    try {
+      final response = await _client
+          .from('users')
+          .select('id')
+          .eq('class_id', classId)
+          .eq('role', 'student');
+      
+      return (response as List).length;
+    } catch (e) {
+      print('Error getting class student count: $e');
+      return 0;
+    }
+  }
+
+  // =====================================================
+  // Grammar Topics (課程)
+  // =====================================================
+
+  // 獲取所有課程（可選班級篩選）
+  Future<List<GrammarTopicModel>> getGrammarTopics({String? classId}) async {
+    var query = _client
         .from('grammar_topics')
-        .select()
-        .order('created_at', ascending: false);
+        .select();
+    
+    if (classId != null) {
+      query = query.eq('class_id', classId);
+    }
+    
+    final response = await query.order('created_at', ascending: false);
     
     return (response as List)
         .map((json) => GrammarTopicModel.fromJson(json))
@@ -1036,14 +1349,20 @@ class SupabaseService {
     }
   }
 
-  Future<String> createGrammarTopic(String title, String description, String teacherId) async {
+  Future<String> createGrammarTopic(String title, String description, String teacherId, {String? classId}) async {
+    final data = {
+      'title': title,
+      'description': description,
+      'teacher_id': teacherId,
+    };
+    
+    if (classId != null) {
+      data['class_id'] = classId;
+    }
+    
     final response = await _client
         .from('grammar_topics')
-        .insert({
-          'title': title,
-          'description': description,
-          'teacher_id': teacherId,
-        })
+        .insert(data)
         .select()
         .single();
     
@@ -1484,22 +1803,38 @@ class SupabaseService {
   }
 
   // Teacher Dashboard - Get all students' progress
-  Future<List<Map<String, dynamic>>> getAllStudentsProgress() async {
+  Future<List<Map<String, dynamic>>> getAllStudentsProgress({String? classId}) async {
     try {
-      print('Getting all students progress...');
+      print('Getting all students progress${classId != null ? ' for class $classId' : ''}...');
       
       // 嘗試使用 SECURITY DEFINER 函數（如果可用）
       try {
         final functionResponse = await _client.rpc('get_all_students');
         if (functionResponse != null) {
-          final studentsList = functionResponse as List;
+          var studentsList = functionResponse as List;
           if (studentsList.isNotEmpty) {
             print('Using get_all_students function, found ${studentsList.length} students');
+            final hasClassIdField = studentsList.any(
+              (s) => s is Map<String, dynamic> && s.containsKey('class_id'),
+            );
+            if (classId != null && !hasClassIdField) {
+              // 舊版 RPC 可能未回傳 class_id，若強行篩選會變成 0 筆
+              throw Exception('get_all_students missing class_id field, fallback to direct query');
+            }
             // 排除不納入統計的帳號（例如開發者/測試帳號）
-            final studentsResponse = studentsList.where((s) {
+            var studentsResponse = studentsList.where((s) {
               final exclude = s is Map<String, dynamic> ? (s['exclude_from_stats'] == true) : false;
               return !exclude;
             }).toList();
+            
+            // 如果有指定班級，篩選該班級的學生
+            if (classId != null) {
+              studentsResponse = studentsResponse.where((s) {
+                final studentClassId = s is Map<String, dynamic> ? s['class_id']?.toString() : null;
+                return studentClassId == classId;
+              }).toList();
+              print('Filtered to ${studentsResponse.length} students in class $classId');
+            }
           
           // 查詢所有學生的題目資料（包含 completed_stages），按 updated_at 降序排序
           final questionsResponse = await _client
@@ -1571,11 +1906,18 @@ class SupabaseService {
       
       // 先查詢所有學生（直接查詢方法）
       print('Attempting direct query to users table...');
-      final studentsResponse = await _client
+      var studentsQuery = _client
           .from('users')
-          .select('id, name, student_id, email, created_at, exclude_from_stats')
+          .select('id, name, student_id, email, created_at, exclude_from_stats, class_id')
           .eq('role', 'student')
           .or('exclude_from_stats.is.null,exclude_from_stats.eq.false');
+      
+      // 如果有指定班級，篩選該班級的學生
+      if (classId != null) {
+        studentsQuery = studentsQuery.eq('class_id', classId);
+      }
+      
+      final studentsResponse = await studentsQuery;
       
       final studentsList = studentsResponse as List;
       print('Students query result: ${studentsList.length} students found');
@@ -1726,6 +2068,201 @@ class SupabaseService {
       final startTime = DateTime.parse(s['start_time']);
       return startTime.isAfter(weekAgo);
     }).length;
+  }
+
+  // Batch query - Get all questions for multiple students at once
+  Future<Map<String, List<QuestionModel>>> getAllQuestionsForStudents(List<String> studentIds) async {
+    if (studentIds.isEmpty) {
+      return {};
+    }
+    
+    try {
+      final response = await _client
+          .from('questions')
+          .select()
+          .inFilter('student_id', studentIds)
+          .order('updated_at', ascending: false);
+      
+      final Map<String, List<QuestionModel>> questionsByStudent = {};
+      
+      for (var json in response as List) {
+        try {
+          final question = QuestionModel.fromJson(json);
+          final studentId = question.studentId;
+          if (!questionsByStudent.containsKey(studentId)) {
+            questionsByStudent[studentId] = [];
+          }
+          questionsByStudent[studentId]!.add(question);
+        } catch (e) {
+          print('Error parsing question: $e');
+        }
+      }
+      
+      // Sort each student's questions by updated_at descending
+      for (var studentId in questionsByStudent.keys) {
+        questionsByStudent[studentId]!.sort((a, b) {
+          final aTime = a.updatedAt ?? a.createdAt;
+          final bTime = b.updatedAt ?? b.createdAt;
+          return bTime.compareTo(aTime);
+        });
+      }
+      
+      return questionsByStudent;
+    } catch (e) {
+      print('Error getting all questions for students: $e');
+      return {};
+    }
+  }
+
+  // Teacher Export - Get question rows for a specific topic (optional class filter)
+  Future<List<Map<String, dynamic>>> getQuestionExportRowsByTopic({
+    required String grammarTopicId,
+    String? classId,
+  }) async {
+    try {
+      final questionsResponse = await _client
+          .from('questions')
+          .select(
+            'id, student_id, question, correct_answer, explanation, stage, teacher_comment, created_at, updated_at',
+          )
+          .eq('grammar_topic_id', grammarTopicId)
+          .order('created_at', ascending: true);
+
+      final questions = (questionsResponse as List).cast<Map<String, dynamic>>();
+      if (questions.isEmpty) {
+        return [];
+      }
+
+      final studentIds = questions
+          .map((q) => q['student_id'] as String?)
+          .whereType<String>()
+          .toSet()
+          .toList();
+
+      var studentsQuery = _client
+          .from('users')
+          .select('id, name, student_id, class_id')
+          .eq('role', 'student')
+          .inFilter('id', studentIds);
+
+      if (classId != null) {
+        studentsQuery = studentsQuery.eq('class_id', classId);
+      }
+
+      final studentsResponse = await studentsQuery;
+      final students = (studentsResponse as List).cast<Map<String, dynamic>>();
+      if (students.isEmpty) {
+        return [];
+      }
+
+      final studentsMap = <String, Map<String, dynamic>>{
+        for (final s in students) s['id'] as String: s,
+      };
+
+      final rows = <Map<String, dynamic>>[];
+      for (final q in questions) {
+        final studentId = q['student_id'] as String?;
+        if (studentId == null || !studentsMap.containsKey(studentId)) {
+          continue;
+        }
+        final student = studentsMap[studentId]!;
+        rows.add({
+          'student_name': student['name'] as String? ?? '',
+          'student_id_number': student['student_id'] as String? ?? '',
+          'question_id': q['id'] as String? ?? '',
+          'question': q['question'] as String? ?? '',
+          'correct_answer': q['correct_answer'] as String? ?? '',
+          'explanation': q['explanation'] as String? ?? '',
+          'teacher_comment': q['teacher_comment'] as String? ?? '',
+          'stage': q['stage']?.toString() ?? '',
+          'created_at': q['created_at'] as String? ?? '',
+          'updated_at': q['updated_at'] as String? ?? '',
+        });
+      }
+
+      return rows;
+    } catch (e) {
+      print('Error getting question export rows by topic: $e');
+      return [];
+    }
+  }
+
+  // Batch query - Get statistics for all students at once
+  Future<Map<String, Map<String, dynamic>>> getAllStudentsStatistics(List<String> studentIds) async {
+    if (studentIds.isEmpty) {
+      return {};
+    }
+    
+    try {
+      // Query all sessions for all students at once
+      final sessionsResponse = await _client
+          .from('user_sessions')
+          .select()
+          .inFilter('student_id', studentIds);
+      
+      // Query all questions for all students at once
+      final questionsResponse = await _client
+          .from('questions')
+          .select('student_id')
+          .inFilter('student_id', studentIds);
+      
+      // Group sessions by student
+      final Map<String, List<dynamic>> sessionsByStudent = {};
+      for (var session in sessionsResponse as List) {
+        final studentId = session['student_id'] as String;
+        if (!sessionsByStudent.containsKey(studentId)) {
+          sessionsByStudent[studentId] = [];
+        }
+        sessionsByStudent[studentId]!.add(session);
+      }
+      
+      // Count questions by student
+      final Map<String, int> questionCountByStudent = {};
+      for (var question in questionsResponse as List) {
+        final studentId = question['student_id'] as String;
+        questionCountByStudent[studentId] = (questionCountByStudent[studentId] ?? 0) + 1;
+      }
+      
+      // Calculate statistics for each student
+      final Map<String, Map<String, dynamic>> result = {};
+      
+      for (var studentId in studentIds) {
+        final sessions = sessionsByStudent[studentId] ?? [];
+        final questionCount = questionCountByStudent[studentId] ?? 0;
+        
+        int totalDuration = 0;
+        int completedSessionsCount = 0;
+        
+        for (var session in sessions) {
+          if (session['end_time'] != null) {
+            final start = DateTime.parse(session['start_time']);
+            final end = DateTime.parse(session['end_time']);
+            final duration = end.difference(start).inMinutes;
+            
+            if (duration > 0) {
+              totalDuration += duration;
+              completedSessionsCount++;
+            }
+          }
+        }
+        
+        final averageDuration = completedSessionsCount > 0
+            ? totalDuration / completedSessionsCount
+            : 0.0;
+        
+        result[studentId] = {
+          'weekly_login_frequency': _calculateWeeklyFrequency(sessions),
+          'average_session_duration': averageDuration,
+          'total_questions': questionCount,
+          'total_usage_time': totalDuration,
+        };
+      }
+      
+      return result;
+    } catch (e) {
+      print('Error getting all students statistics: $e');
+      return {};
+    }
   }
 
   // Session Management - 創建新的 session

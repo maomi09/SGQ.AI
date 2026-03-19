@@ -119,7 +119,7 @@ class AuthProvider with ChangeNotifier {
     }
   }
 
-  Future<bool> signIn(String email, String password) async {
+  Future<bool> signIn(String identifier, String password) async {
     // 先清除之前的狀態和錯誤訊息
     _currentUser = null;
     _errorMessage = null;
@@ -127,7 +127,7 @@ class AuthProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      final response = await _supabaseService.signIn(email, password);
+      final response = await _supabaseService.signInWithIdentifier(identifier, password);
       
       if (response.user != null) {
         _currentUser = await _supabaseService.getUser(response.user!.id);
@@ -154,7 +154,7 @@ class AuthProvider with ChangeNotifier {
           } else {
             _currentUser = UserModel(
               id: authUser.id,
-              email: authUser.email ?? email,
+              email: authUser.email ?? identifier,
               name: userMetadata?['name'] as String? ?? 'User',
               role: role,
               studentId: userMetadata?['student_id'] as String?,
@@ -173,10 +173,10 @@ class AuthProvider with ChangeNotifier {
         } else {
           // 如果從 users 表獲取成功，但 email 為空或與 auth 不一致，則更新
           final authUser = response.user!;
-          if (_currentUser!.email.isEmpty || _currentUser!.email != (authUser.email ?? email)) {
+          if (_currentUser!.email.isEmpty || _currentUser!.email != (authUser.email ?? identifier)) {
             _currentUser = UserModel(
               id: _currentUser!.id,
-              email: authUser.email ?? email,
+              email: authUser.email ?? identifier,
               name: _currentUser!.name,
               role: _currentUser!.role,
               studentId: _currentUser!.studentId,

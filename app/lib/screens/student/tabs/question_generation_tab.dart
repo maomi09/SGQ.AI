@@ -7,7 +7,7 @@ import '../../../providers/auth_provider.dart';
 import '../../../models/question_model.dart';
 import '../../../utils/user_animal_helper.dart';
 import '../../chatgpt/chatgpt_chat_screen.dart';
-import '../../badges/badges_screen.dart';
+import '../../../widgets/cute_loading_indicator.dart';
 
 class QuestionGenerationTab extends StatefulWidget {
   const QuestionGenerationTab({super.key});
@@ -27,6 +27,7 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
   QuestionType _selectedType = QuestionType.multipleChoice;
   String? _selectedCorrectAnswer;
   QuestionModel? _editingQuestion;
+  bool _isRefreshing = false;
 
   @override
   void initState() {
@@ -311,6 +312,73 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
     }
   }
 
+  Future<void> _showTopicSelectionDialog() async {
+    final grammarTopicProvider = Provider.of<GrammarTopicProvider>(context, listen: false);
+    final topics = grammarTopicProvider.topics;
+
+    if (topics.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('目前沒有可選擇的課程'),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
+    final selectedTopicId = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        title: const Text('選擇課程'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.separated(
+            shrinkWrap: true,
+            itemCount: topics.length,
+            separatorBuilder: (_, __) => const Divider(height: 1),
+            itemBuilder: (context, index) {
+              final topic = topics[index];
+              final isSelected = grammarTopicProvider.selectedTopic?.id == topic.id;
+              return ListTile(
+                title: Text(topic.title),
+                subtitle: topic.description.isNotEmpty
+                    ? Text(
+                        topic.description,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      )
+                    : null,
+                trailing: isSelected
+                    ? Icon(Icons.check_circle, color: Colors.green.shade600)
+                    : null,
+                onTap: () => Navigator.pop(dialogContext, topic.id),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('取消'),
+          ),
+        ],
+      ),
+    );
+
+    if (selectedTopicId != null) {
+      grammarTopicProvider.selectTopic(selectedTopicId);
+      await _loadQuestions();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final grammarTopicProvider = Provider.of<GrammarTopicProvider>(context);
@@ -329,13 +397,14 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
     final bottomPadding = MediaQuery.of(context).padding.bottom;
 
     final Widget scaffoldBody = SafeArea(
+      bottom: false,
       child: SingleChildScrollView(
             padding: EdgeInsets.only(
-              bottom: viewInsets.bottom + bottomPadding + 100,
+              bottom: viewInsets.bottom + bottomPadding + 24,
             ),
             child: Container(
             constraints: BoxConstraints(
-              minHeight: MediaQuery.of(context).size.height - MediaQuery.of(context).padding.top - MediaQuery.of(context).padding.bottom - 100,
+              minHeight: MediaQuery.of(context).size.height - MediaQuery.of(context).padding.top,
             ),
             decoration: BoxDecoration(
               gradient: LinearGradient(
@@ -419,15 +488,39 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
                       return Row(
                         children: [
                           IconButton(
-                            icon: const Icon(Icons.stars),
-                            onPressed: () {
-                              Navigator.push(
+                            icon: const Icon(Icons.refresh),
+                            tooltip: '刷新',
+                            onPressed: () async {
+                              final grammarTopicProvider = Provider.of<GrammarTopicProvider>(
                                 context,
-                                MaterialPageRoute(
-                                  builder: (context) => const BadgesScreen(),
-                                ),
+                                listen: false,
                               );
+                              setState(() {
+                                _isRefreshing = true;
+                              });
+                              try {
+                                await grammarTopicProvider.loadTopics(
+                                  classId: grammarTopicProvider.currentClassId,
+                                );
+                                if (grammarTopicProvider.selectedTopic != null) {
+                                  await _loadQuestions();
+                                }
+                              } finally {
+                                if (mounted) {
+                                  setState(() {
+                                    _isRefreshing = false;
+                                  });
+                                }
+                              }
                             },
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.add_circle_outline),
+                            tooltip: '新增題目',
+                            onPressed: grammarTopicProvider.selectedTopic != null &&
+                                    _editingQuestion == null
+                                ? () => _showAddQuestionDialog(context)
+                                : null,
                           ),
                           if (aiSettings.isEnabled)
                             IconButton(
@@ -447,136 +540,74 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
             if (grammarTopicProvider.selectedTopic == null)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(16),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.05),
-                              blurRadius: 8,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
+                child: InkWell(
+                  onTap: _showTopicSelectionDialog,
+                  borderRadius: BorderRadius.circular(16),
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.05),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
                         ),
-                        child: DropdownButton<String>(
-                          value: null,
-                          hint: const Text('請選擇文法主題'),
-                          isExpanded: true,
-                          underline: const SizedBox(),
-                          items: grammarTopicProvider.topics.map((topic) {
-                            return DropdownMenuItem(
-                              value: topic.id,
-                              child: Text(topic.title),
-                            );
-                          }).toList(),
-                          onChanged: (topicId) {
-                            if (topicId != null) {
-                              Provider.of<GrammarTopicProvider>(context, listen: false)
-                                  .selectTopic(topicId);
-                              _loadQuestions();
-                            }
-                          },
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            '請選擇文法主題',
+                            style: TextStyle(fontSize: 16, color: Color(0xFF1F2937)),
+                          ),
                         ),
-                      ),
+                        Icon(Icons.keyboard_arrow_down, color: Colors.grey[700]),
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    IconButton(
-                      icon: const Icon(Icons.refresh, color: Color(0xFF1F2937)),
-                      onPressed: () async {
-                        final grammarTopicProvider = Provider.of<GrammarTopicProvider>(context, listen: false);
-                        await grammarTopicProvider.loadTopics();
-                      },
-                      tooltip: '刷新',
-                    ),
-                  ],
+                  ),
                 ),
               )
             else
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: Colors.amber.shade400,
-                          borderRadius: BorderRadius.circular(20),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.1),
-                              blurRadius: 10,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
+                child: InkWell(
+                  onTap: _showTopicSelectionDialog,
+                  borderRadius: BorderRadius.circular(20),
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.shade400,
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.1),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4),
                         ),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    '文法主題: ${grammarTopicProvider.selectedTopic!.title}',
-                                    style: const TextStyle(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.bold,
-                                      color: Color(0xFF1F2937),
-                                    ),
-                                  ),
-                                  if (grammarTopicProvider.selectedTopic!.description.isNotEmpty) ...[
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      grammarTopicProvider.selectedTopic!.description,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.grey[700],
-                                      ),
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ],
-                                ],
-                              ),
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            grammarTopicProvider.selectedTopic!.title,
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF1F2937),
                             ),
-                            PopupMenuButton<String>(
-                              icon: const Icon(Icons.arrow_drop_down, color: Color(0xFF1F2937)),
-                              onSelected: (topicId) {
-                                Provider.of<GrammarTopicProvider>(context, listen: false)
-                                    .selectTopic(topicId);
-                                WidgetsBinding.instance.addPostFrameCallback((_) {
-                                  if (mounted) {
-                                    _loadQuestions();
-                                  }
-                                });
-                              },
-                              itemBuilder: (context) => grammarTopicProvider.topics.map((topic) {
-                                return PopupMenuItem(
-                                  value: topic.id,
-                                  child: Text(topic.title),
-                                );
-                              }).toList(),
-                            ),
-                          ],
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
-                      ),
+                        const SizedBox(width: 8),
+                        const Icon(Icons.keyboard_arrow_down, color: Color(0xFF1F2937)),
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    IconButton(
-                      icon: const Icon(Icons.refresh, color: Color(0xFF1F2937)),
-                      onPressed: () async {
-                        final grammarTopicProvider = Provider.of<GrammarTopicProvider>(context, listen: false);
-                        await grammarTopicProvider.loadTopics();
-                        _loadQuestions();
-                      },
-                      tooltip: '刷新',
-                    ),
-                  ],
+                  ),
                 ),
               ),
             const SizedBox(height: 24),
@@ -592,6 +623,13 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
                       color: Colors.grey[600],
                     ),
                   ),
+                ),
+              )
+            else if (_isRefreshing)
+              SizedBox(
+                height: 280,
+                child: const Center(
+                  child: CuteLoadingIndicator(label: '重新整理中'),
                 ),
               )
             else if (currentQuestions.isEmpty && _editingQuestion == null)
@@ -617,7 +655,7 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        '點擊右下角 + 號新增題目',
+                        '點擊右上角 + 號新增題目',
                         style: TextStyle(
                           fontSize: 14,
                           color: Colors.grey[500],
@@ -996,17 +1034,9 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
       ),
     );
     return Scaffold(
+      backgroundColor: Colors.transparent,
       resizeToAvoidBottomInset: false,
       body: scaffoldBody,
-      floatingActionButton: grammarTopicProvider.selectedTopic != null && 
-          _editingQuestion == null
-          ? FloatingActionButton(
-              onPressed: () => _showAddQuestionDialog(context),
-              backgroundColor: Colors.green.shade600,
-              child: const Icon(Icons.add, color: Colors.white),
-            )
-          : null,
-      floatingActionButtonLocation: _CustomFloatingActionButtonLocation(),
     );
   }
 
@@ -1267,24 +1297,5 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
         maxLines: maxLines,
       ),
     );
-  }
-}
-
-class _CustomFloatingActionButtonLocation extends FloatingActionButtonLocation {
-  const _CustomFloatingActionButtonLocation();
-
-  @override
-  Offset getOffset(ScaffoldPrelayoutGeometry scaffoldGeometry) {
-    // 導航欄高度約 80px + 底部間距 16px + SafeArea + 額外安全間距
-    // 使用 minInsets.bottom 獲取底部安全區域
-    final double safeAreaBottom = scaffoldGeometry.minInsets.bottom;
-    final double navigationBarHeight = 80 + 16 + safeAreaBottom + 30;
-    final double bottom = scaffoldGeometry.scaffoldSize.height -
-        scaffoldGeometry.floatingActionButtonSize.height -
-        navigationBarHeight;
-    final double right = scaffoldGeometry.scaffoldSize.width -
-        scaffoldGeometry.floatingActionButtonSize.width -
-        16; // 右邊距
-    return Offset(right, bottom);
   }
 }

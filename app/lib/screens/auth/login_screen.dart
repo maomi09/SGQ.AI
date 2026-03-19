@@ -350,7 +350,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     controller: _emailController,
                     enabled: !_codeSent || _isLogin,
                     decoration: InputDecoration(
-                      hintText: 'Email address',
+                      hintText: _isLogin ? 'Email 或學號' : 'Email address',
                       hintStyle: TextStyle(color: Colors.grey[400]),
                       filled: true,
                       fillColor: Colors.grey[50],
@@ -401,22 +401,27 @@ class _LoginScreenState extends State<LoginScreen> {
                                       : null)
                           : null,
                     ),
-                    keyboardType: TextInputType.emailAddress,
+                    keyboardType: _isLogin ? TextInputType.text : TextInputType.emailAddress,
                     autocorrect: false,
                     onChanged: !_isLogin ? (value) => _checkEmailAvailability(value) : null,
                     validator: (value) {
                       if (value == null || value.isEmpty) {
-                        return '請輸入電子郵件';
+                        return _isLogin ? '請輸入 Email 或學號' : '請輸入電子郵件';
                       }
                       final trimmedValue = value.trim();
-                      // 更嚴格的電子郵件格式驗證
-                      final emailRegex = RegExp(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$');
-                      if (!emailRegex.hasMatch(trimmedValue)) {
-                        return '請輸入有效的電子郵件格式';
-                      }
-                      // 在註冊模式下，檢查信箱是否已被使用
-                      if (!_isLogin && _isEmailTaken == true) {
-                        return '此電子郵件已被註冊';
+                      if (_isLogin) {
+                        // 登入模式：允許 Email 或學號
+                        return null;
+                      } else {
+                        // 註冊模式：必須是有效 Email
+                        final emailRegex = RegExp(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$');
+                        if (!emailRegex.hasMatch(trimmedValue)) {
+                          return '請輸入有效的電子郵件格式';
+                        }
+                        // 在註冊模式下，檢查信箱是否已被使用
+                        if (_isEmailTaken == true) {
+                          return '此電子郵件已被註冊';
+                        }
                       }
                       return null;
                     },
@@ -703,135 +708,124 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                     ),
                   const SizedBox(height: 16),
-                  Consumer<AuthProvider>(
-                    builder: (context, authProvider, child) {
-                      return OutlinedButton(
-                        onPressed: authProvider.isLoading ? null : () async {
-                          final success = await authProvider.signInWithGoogle();
-                          if (!success && mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Google 登入失敗，請重試'),
-                                backgroundColor: Colors.red,
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Consumer<AuthProvider>(
+                          builder: (context, authProvider, child) {
+                            return OutlinedButton(
+                              onPressed: authProvider.isLoading
+                                  ? null
+                                  : () async {
+                                      final success = await authProvider.signInWithGoogle();
+                                      if (!success && mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            content: Text('Google 登入失敗，請重試'),
+                                            backgroundColor: Colors.red,
+                                          ),
+                                        );
+                                      }
+                                    },
+                              style: OutlinedButton.styleFrom(
+                                backgroundColor: Colors.white,
+                                foregroundColor: const Color(0xFF1F2937),
+                                padding: const EdgeInsets.symmetric(vertical: 16),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  side: BorderSide(color: Colors.grey[300]!),
+                                ),
+                                elevation: 0,
                               ),
-                            );
-                          }
-                        },
-                        style: OutlinedButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          foregroundColor: const Color(0xFF1F2937),
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            side: BorderSide(color: Colors.grey[300]!),
-                          ),
-                          elevation: 0,
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            // 使用 Google 官方圖標
-                            Image.network(
-                              'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg',
-                              width: 20,
-                              height: 20,
-                              errorBuilder: (context, error, stackTrace) {
-                                // 備用方案：使用官方 PNG
-                                return Image.network(
-                                  'https://developers.google.com/identity/images/g-logo.png',
+                              child: Center(
+                                child: Image.network(
+                                  'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg',
                                   width: 20,
                                   height: 20,
                                   errorBuilder: (context, error, stackTrace) {
-                                    // 最終備用方案：顯示文字 G
-                                    return Container(
+                                    // 備用方案：使用官方 PNG
+                                    return Image.network(
+                                      'https://developers.google.com/identity/images/g-logo.png',
                                       width: 20,
                                       height: 20,
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(2),
-                                        gradient: const LinearGradient(
-                                          colors: [
-                                            Color(0xFF4285F4),
-                                            Color(0xFF34A853),
-                                            Color(0xFFFBBC05),
-                                            Color(0xFFEA4335),
-                                          ],
-                                          stops: [0.0, 0.33, 0.66, 1.0],
-                                          begin: Alignment.topLeft,
-                                          end: Alignment.bottomRight,
-                                        ),
-                                      ),
-                                      child: const Center(
-                                        child: Text(
-                                          'G',
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.bold,
-                                            height: 1.0,
+                                      errorBuilder: (context, error, stackTrace) {
+                                        // 最終備用方案：顯示文字 G
+                                        return Container(
+                                          width: 20,
+                                          height: 20,
+                                          decoration: BoxDecoration(
+                                            borderRadius: BorderRadius.circular(2),
+                                            gradient: const LinearGradient(
+                                              colors: [
+                                                Color(0xFF4285F4),
+                                                Color(0xFF34A853),
+                                                Color(0xFFFBBC05),
+                                                Color(0xFFEA4335),
+                                              ],
+                                              stops: [0.0, 0.33, 0.66, 1.0],
+                                              begin: Alignment.topLeft,
+                                              end: Alignment.bottomRight,
+                                            ),
                                           ),
-                                        ),
-                                      ),
+                                          child: const Center(
+                                            child: Text(
+                                              'G',
+                                              style: TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 12,
+                                                fontWeight: FontWeight.bold,
+                                                height: 1.0,
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                      },
                                     );
                                   },
-                                );
-                              },
-                            ),
-                            const SizedBox(width: 12),
-                            const Text(
-                              'Sign in with Google',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  Consumer<AuthProvider>(
-                    builder: (context, authProvider, child) {
-                      return OutlinedButton(
-                        onPressed: authProvider.isLoading ? null : () async {
-                          final success = await authProvider.signInWithApple();
-                          if (!success && mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Apple 登入失敗，請重試'),
-                                backgroundColor: Colors.red,
+                                ),
                               ),
                             );
-                          }
-                        },
-                        style: OutlinedButton.styleFrom(
-                          backgroundColor: Colors.black,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          elevation: 0,
+                          },
                         ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(
-                              Icons.apple,
-                              size: 20,
-                            ),
-                            const SizedBox(width: 12),
-                            const Text(
-                              'Sign in with Apple',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w500,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Consumer<AuthProvider>(
+                          builder: (context, authProvider, child) {
+                            return OutlinedButton(
+                              onPressed: authProvider.isLoading
+                                  ? null
+                                  : () async {
+                                      final success = await authProvider.signInWithApple();
+                                      if (!success && mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            content: Text('Apple 登入失敗，請重試'),
+                                            backgroundColor: Colors.red,
+                                          ),
+                                        );
+                                      }
+                                    },
+                              style: OutlinedButton.styleFrom(
+                                backgroundColor: Colors.black,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(vertical: 16),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                elevation: 0,
                               ),
-                            ),
-                          ],
+                              child: const Center(
+                                child: Icon(
+                                  Icons.apple,
+                                  size: 20,
+                                ),
+                              ),
+                            );
+                          },
                         ),
-                      );
-                    },
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 24),
                   Row(

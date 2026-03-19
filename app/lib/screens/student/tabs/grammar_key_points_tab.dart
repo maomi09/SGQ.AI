@@ -7,7 +7,7 @@ import '../../../services/supabase_service.dart';
 import '../../../models/grammar_key_point_model.dart';
 import '../../../utils/user_animal_helper.dart';
 import '../../chatgpt/chatgpt_chat_screen.dart';
-import '../../badges/badges_screen.dart';
+import '../../../widgets/cute_loading_indicator.dart';
 
 class GrammarKeyPointsTab extends StatefulWidget {
   const GrammarKeyPointsTab({super.key});
@@ -20,6 +20,8 @@ class _GrammarKeyPointsTabState extends State<GrammarKeyPointsTab> {
   final SupabaseService _supabaseService = SupabaseService();
   List<GrammarKeyPointModel> _keyPoints = [];
   bool _isLoading = true;
+  bool _isRefreshing = false;
+  String? _lastLoadedTopicId;
 
   @override
   void initState() {
@@ -55,12 +57,83 @@ class _GrammarKeyPointsTabState extends State<GrammarKeyPointsTab> {
     }
   }
 
+  Future<void> _showTopicSelectionDialog() async {
+    final grammarTopicProvider = Provider.of<GrammarTopicProvider>(context, listen: false);
+    final topics = grammarTopicProvider.topics;
+
+    if (topics.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('目前沒有可選擇的課程'),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
+    final selectedTopicId = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        title: const Text('選擇課程'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.separated(
+            shrinkWrap: true,
+            itemCount: topics.length,
+            separatorBuilder: (_, __) => const Divider(height: 1),
+            itemBuilder: (context, index) {
+              final topic = topics[index];
+              final isSelected = grammarTopicProvider.selectedTopic?.id == topic.id;
+              return ListTile(
+                title: Text(topic.title),
+                subtitle: topic.description.isNotEmpty
+                    ? Text(
+                        topic.description,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      )
+                    : null,
+                trailing: isSelected
+                    ? Icon(Icons.check_circle, color: Colors.green.shade600)
+                    : null,
+                onTap: () => Navigator.pop(dialogContext, topic.id),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('取消'),
+          ),
+        ],
+      ),
+    );
+
+    if (selectedTopicId != null) {
+      grammarTopicProvider.selectTopic(selectedTopicId);
+      await _loadKeyPoints();
+    }
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     final grammarTopicProvider = Provider.of<GrammarTopicProvider>(context);
     if (grammarTopicProvider.selectedTopic != null) {
-      _loadKeyPoints();
+      final currentTopicId = grammarTopicProvider.selectedTopic!.id;
+      if (currentTopicId != _lastLoadedTopicId) {
+        _lastLoadedTopicId = currentTopicId;
+        _loadKeyPoints();
+      }
     }
   }
 
@@ -153,14 +226,30 @@ class _GrammarKeyPointsTabState extends State<GrammarKeyPointsTab> {
                       return Row(
                         children: [
                           IconButton(
-                            icon: const Icon(Icons.stars),
-                            onPressed: () {
-                              Navigator.push(
+                            icon: const Icon(Icons.refresh),
+                            tooltip: '刷新',
+                            onPressed: () async {
+                              final grammarTopicProvider = Provider.of<GrammarTopicProvider>(
                                 context,
-                                MaterialPageRoute(
-                                  builder: (context) => const BadgesScreen(),
-                                ),
+                                listen: false,
                               );
+                              setState(() {
+                                _isRefreshing = true;
+                              });
+                              try {
+                                await grammarTopicProvider.loadTopics(
+                                  classId: grammarTopicProvider.currentClassId,
+                                );
+                                if (grammarTopicProvider.selectedTopic != null) {
+                                  await _loadKeyPoints();
+                                }
+                              } finally {
+                                if (mounted) {
+                                  setState(() {
+                                    _isRefreshing = false;
+                                  });
+                                }
+                              }
                             },
                           ),
                           if (aiSettings.isEnabled)
@@ -181,137 +270,85 @@ class _GrammarKeyPointsTabState extends State<GrammarKeyPointsTab> {
             if (grammarTopicProvider.selectedTopic == null)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(16),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.05),
-                              blurRadius: 8,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
+                child: InkWell(
+                  onTap: _showTopicSelectionDialog,
+                  borderRadius: BorderRadius.circular(16),
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.05),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
                         ),
-                        child: DropdownButton<String>(
-                          value: null,
-                          hint: const Text('請選擇文法主題'),
-                          isExpanded: true,
-                          underline: const SizedBox(),
-                          items: grammarTopicProvider.topics.map((topic) {
-                            return DropdownMenuItem(
-                              value: topic.id,
-                              child: Text(topic.title),
-                            );
-                          }).toList(),
-                          onChanged: (topicId) {
-                            if (topicId != null) {
-                              Provider.of<GrammarTopicProvider>(context, listen: false)
-                                  .selectTopic(topicId);
-                            }
-                          },
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            '請選擇文法主題',
+                            style: TextStyle(fontSize: 16, color: Color(0xFF1F2937)),
+                          ),
                         ),
-                      ),
+                        Icon(Icons.keyboard_arrow_down, color: Colors.grey[700]),
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    IconButton(
-                      icon: const Icon(Icons.refresh, color: Color(0xFF1F2937)),
-                      onPressed: () async {
-                        final grammarTopicProvider = Provider.of<GrammarTopicProvider>(context, listen: false);
-                        await grammarTopicProvider.loadTopics();
-                      },
-                      tooltip: '刷新',
-                    ),
-                  ],
+                  ),
                 ),
               )
             else
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: Colors.amber.shade400,
-                          borderRadius: BorderRadius.circular(20),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.1),
-                              blurRadius: 10,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
+                child: InkWell(
+                  onTap: _showTopicSelectionDialog,
+                  borderRadius: BorderRadius.circular(20),
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.shade400,
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.1),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4),
                         ),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    '文法主題: ${grammarTopicProvider.selectedTopic!.title}',
-                                    style: const TextStyle(
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.bold,
-                                      color: Color(0xFF1F2937),
-                                    ),
-                                  ),
-                                  if (grammarTopicProvider.selectedTopic!.description.isNotEmpty) ...[
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      grammarTopicProvider.selectedTopic!.description,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.grey[700],
-                                      ),
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ],
-                                ],
-                              ),
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            grammarTopicProvider.selectedTopic!.title,
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF1F2937),
                             ),
-                            PopupMenuButton<String>(
-                              icon: const Icon(Icons.arrow_drop_down, color: Color(0xFF1F2937)),
-                              onSelected: (topicId) {
-                                Provider.of<GrammarTopicProvider>(context, listen: false)
-                                    .selectTopic(topicId);
-                              },
-                              itemBuilder: (context) => grammarTopicProvider.topics.map((topic) {
-                                return PopupMenuItem(
-                                  value: topic.id,
-                                  child: Text(topic.title),
-                                );
-                              }).toList(),
-                            ),
-                          ],
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
-                      ),
+                        const SizedBox(width: 8),
+                        const Icon(Icons.keyboard_arrow_down, color: Color(0xFF1F2937)),
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    IconButton(
-                      icon: const Icon(Icons.refresh, color: Color(0xFF1F2937)),
-                      onPressed: () async {
-                        final grammarTopicProvider = Provider.of<GrammarTopicProvider>(context, listen: false);
-                        await grammarTopicProvider.loadTopics();
-                        _loadKeyPoints();
-                      },
-                      tooltip: '刷新',
-                    ),
-                  ],
+                  ),
                 ),
               ),
             const SizedBox(height: 24),
             // 內容區域
             Expanded(
               child: _isLoading
-                  ? const Center(child: CircularProgressIndicator())
+                  ? Center(
+                      child: CuteLoadingIndicator(
+                        label: _isRefreshing ? '重新整理中' : '載入中...',
+                      ),
+                    )
                   : grammarTopicProvider.selectedTopic == null
                       ? Center(
                           child: Text(
@@ -322,83 +359,118 @@ class _GrammarKeyPointsTabState extends State<GrammarKeyPointsTab> {
                             ),
                           ),
                         )
-                      : _keyPoints.isEmpty
-                          ? Center(
-                              child: Text(
-                                '此主題尚無文法重點',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  color: Colors.grey[600],
-                                ),
-                              ),
-                            )
-                          : ListView.builder(
-                              padding: EdgeInsets.only(
-                                left: 20,
-                                right: 20,
-                                bottom: MediaQuery.of(context).padding.bottom + 100,
-                              ),
-                              itemCount: _keyPoints.length,
-                              itemBuilder: (context, index) {
-                                final point = _keyPoints[index];
-                                return Container(
-                                  margin: const EdgeInsets.only(bottom: 16),
-                                  padding: const EdgeInsets.all(20),
+                      : ListView.builder(
+                          padding: EdgeInsets.only(
+                            left: 20,
+                            right: 20,
+                            bottom: MediaQuery.of(context).padding.bottom + 100,
+                          ),
+                          itemCount:
+                              (grammarTopicProvider.selectedTopic!.description.isNotEmpty ? 1 : 0) +
+                                  (_keyPoints.isEmpty ? 1 : _keyPoints.length),
+                          itemBuilder: (context, index) {
+                            final hasDescription =
+                                grammarTopicProvider.selectedTopic!.description.isNotEmpty;
+                            final descriptionOffset = hasDescription ? 1 : 0;
+
+                            if (hasDescription && index == 0) {
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 12),
+                                child: Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(14),
                                   decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(16),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withOpacity(0.05),
-                                        blurRadius: 8,
-                                        offset: const Offset(0, 2),
-                                      ),
-                                    ],
+                                    color: Colors.white.withOpacity(0.85),
+                                    borderRadius: BorderRadius.circular(12),
                                   ),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                  child: Text(
+                                    grammarTopicProvider.selectedTopic!.description,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: Colors.grey[700],
+                                      height: 1.4,
+                                    ),
+                                    maxLines: 3,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              );
+                            }
+
+                            if (_keyPoints.isEmpty) {
+                              return Padding(
+                                padding: const EdgeInsets.only(top: 40),
+                                child: Center(
+                                  child: Text(
+                                    '此主題尚無文法重點',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      color: Colors.grey[600],
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }
+
+                            final point = _keyPoints[index - descriptionOffset];
+                            return Container(
+                              margin: const EdgeInsets.only(bottom: 16),
+                              padding: const EdgeInsets.all(20),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(16),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.05),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
                                     children: [
-                                      Row(
-                                        children: [
-                                          Container(
-                                            width: 40,
-                                            height: 40,
-                                            decoration: BoxDecoration(
-                                              color: Colors.blue.shade50,
-                                              borderRadius: BorderRadius.circular(10),
-                                            ),
-                                            child: Icon(
-                                              Icons.flag,
-                                              color: Colors.blue.shade600,
-                                            ),
-                                          ),
-                                          const SizedBox(width: 12),
-                                          Expanded(
-                                            child: Text(
-                                              point.title,
-                                              style: const TextStyle(
-                                                fontSize: 18,
-                                                fontWeight: FontWeight.bold,
-                                                color: Color(0xFF1F2937),
-                                              ),
-                                            ),
-                                          ),
-                                        ],
+                                      Container(
+                                        width: 40,
+                                        height: 40,
+                                        decoration: BoxDecoration(
+                                          color: Colors.blue.shade50,
+                                          borderRadius: BorderRadius.circular(10),
+                                        ),
+                                        child: Icon(
+                                          Icons.flag,
+                                          color: Colors.blue.shade600,
+                                        ),
                                       ),
-                                      const SizedBox(height: 12),
-                                      Text(
-                                        point.content,
-                                        style: TextStyle(
-                                          fontSize: 15,
-                                          color: Colors.grey[700],
-                                          height: 1.5,
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Text(
+                                          point.title,
+                                          style: const TextStyle(
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.bold,
+                                            color: Color(0xFF1F2937),
+                                          ),
                                         ),
                                       ),
                                     ],
                                   ),
-                                );
-                              },
-                            ),
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    point.content,
+                                    style: TextStyle(
+                                      fontSize: 15,
+                                      color: Colors.grey[700],
+                                      height: 1.5,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
             ),
           ],
         ),

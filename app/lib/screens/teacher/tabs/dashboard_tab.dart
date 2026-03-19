@@ -1,14 +1,18 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import '../../../providers/auth_provider.dart';
 import '../../../providers/grammar_topic_provider.dart';
+import '../../../providers/class_provider.dart';
 import '../../../services/supabase_service.dart';
 import '../../../models/question_model.dart';
 import '../../../models/badge_model.dart';
+import '../../../models/class_model.dart';
 import '../../../utils/user_animal_helper.dart';
 import '../../../utils/error_handler.dart';
+import '../../../providers/teacher_auto_refresh_provider.dart';
 
 class DashboardTab extends StatefulWidget {
   const DashboardTab({super.key});
@@ -21,30 +25,51 @@ class _DashboardTabState extends State<DashboardTab> {
   final SupabaseService _supabaseService = SupabaseService();
   List<Map<String, dynamic>> _studentsProgress = [];
   bool _isLoading = true;
-  Timer? _refreshTimer;
   Set<String> _resolvedStudentIds = {}; // 已標記為「已完成」的學生 ID
   Map<String, bool> _studentsOnlineStatus = {}; // 學生的登入狀態
+  String? _selectedClassId; // 選中的班級 ID
+  bool _isTopPanelCollapsed = false; // 頂部篩選與資訊字卡收合狀態
+
+  late TeacherAutoRefreshProvider _autoRefreshProvider;
+  int _lastRefreshToken = -1;
+  bool _listenerAttached = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      // 啟動共用倒數與刷新事件監聽（讓 Dashboard / Statistics 同步）
+      _autoRefreshProvider = Provider.of<TeacherAutoRefreshProvider>(context, listen: false);
+      _lastRefreshToken = _autoRefreshProvider.refreshToken;
+      _autoRefreshProvider.addListener(_handleAutoRefreshTokenChanged);
+      _listenerAttached = true;
+
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      if (authProvider.currentUser != null) {
+        // 載入老師的班級列表
+        Provider.of<ClassProvider>(context, listen: false)
+            .loadTeacherClasses(authProvider.currentUser!.id);
+      }
       Provider.of<GrammarTopicProvider>(context, listen: false).loadTopics();
     });
     _loadStudentsProgress();
-    
-    // 設置自動刷新：每30秒刷新一次
-    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
-      if (mounted) {
-        _loadStudentsProgress();
-      }
-    });
   }
 
   @override
   void dispose() {
-    _refreshTimer?.cancel();
+    if (_listenerAttached) {
+      _autoRefreshProvider.removeListener(_handleAutoRefreshTokenChanged);
+    }
     super.dispose();
+  }
+
+  void _handleAutoRefreshTokenChanged() {
+    if (!mounted) return;
+    final token = _autoRefreshProvider.refreshToken;
+    if (token != _lastRefreshToken) {
+      _lastRefreshToken = token;
+      _loadStudentsProgress();
+    }
   }
 
   Future<void> _loadStudentsProgress() async {
@@ -56,7 +81,8 @@ class _DashboardTabState extends State<DashboardTab> {
       // 同時載入已標記為「已完成」的學生 ID
       _resolvedStudentIds = await _supabaseService.getResolvedStudentIds();
       
-      final progress = await _supabaseService.getAllStudentsProgress();
+      // 根據選中的班級篩選學生
+      final progress = await _supabaseService.getAllStudentsProgress(classId: _selectedClassId);
       
       // 獲取所有學生的登入狀態
       final studentIds = progress.map((s) => s['student_id'] as String).toList();
@@ -73,157 +99,108 @@ class _DashboardTabState extends State<DashboardTab> {
       }
       print('Dashboard: Loaded ${topics.length} grammar topics');
       
+      // 批量查詢所有學生的題目（優化：一次查詢取代 N 次查詢）
+      final allQuestionsByStudent = await _supabaseService.getAllQuestionsForStudents(studentIds);
+      print('Dashboard: Batch loaded questions for ${allQuestionsByStudent.length} students');
+      
       // 為每個學生添加詳細的階段信息
       final List<Map<String, dynamic>> enrichedProgress = [];
       for (var student in progress) {
         final studentId = student['student_id'] as String;
-        print('Dashboard: Processing student ${student['student_name']} with student_id=$studentId');
-        print('Dashboard: Student data keys: ${student.keys.toList()}');
         
-        // 獲取學生的所有題目（不按課程過濾）
-        try {
-          print('Dashboard: Calling getQuestions for student_id=$studentId');
-          final questions = await _supabaseService.getQuestions(studentId);
-          print('Student ${student['student_name']}: Found ${questions.length} questions');
+        // 從批量查詢結果中獲取該學生的題目
+        final questions = allQuestionsByStudent[studentId] ?? [];
+        
+        // 計算每個階段的題目數和完成狀態
+        final stageCounts = <int, int>{1: 0, 2: 0, 3: 0, 4: 0};
+        final completedStagesCount = <int, int>{1: 0, 2: 0, 3: 0, 4: 0};
+        int totalCompletedStages = 0;
+        int maxCompletedStage = 0;
+        
+        for (var question in questions) {
+          final stage = question.stage;
+          stageCounts[stage] = (stageCounts[stage] ?? 0) + 1;
           
-          // 如果沒有找到題目，記錄警告
-          if (questions.isEmpty) {
-            print('WARNING: No questions found for student $studentId (${student['student_name']})');
-            print('This could be due to:');
-            print('1. Student has not created any questions yet');
-            print('2. RLS policy preventing teacher from reading student questions');
-            print('3. student_id mismatch between users and questions tables');
-          }
-          
-          // 計算每個階段的題目數和完成狀態
-          final stageCounts = <int, int>{1: 0, 2: 0, 3: 0, 4: 0};
-          final completedStagesCount = <int, int>{1: 0, 2: 0, 3: 0, 4: 0};
-          int totalCompletedStages = 0;
-          int maxCompletedStage = 0; // 追蹤學生完成過的最高階段
-          
-          for (var question in questions) {
-            final stage = question.stage;
-            stageCounts[stage] = (stageCounts[stage] ?? 0) + 1;
-            
-            // 檢查 completed_stages 來確定學生完成的階段
-            if (question.completedStages != null && question.completedStages!.isNotEmpty) {
-              for (var completedStage in question.completedStages!.keys) {
-                completedStagesCount[completedStage] = (completedStagesCount[completedStage] ?? 0) + 1;
-                totalCompletedStages++;
-                if (completedStage > maxCompletedStage) {
-                  maxCompletedStage = completedStage;
-                }
+          if (question.completedStages != null && question.completedStages!.isNotEmpty) {
+            for (var completedStage in question.completedStages!.keys) {
+              completedStagesCount[completedStage] = (completedStagesCount[completedStage] ?? 0) + 1;
+              totalCompletedStages++;
+              if (completedStage > maxCompletedStage) {
+                maxCompletedStage = completedStage;
               }
             }
           }
+        }
+        
+        int currentStage = 1;
+        
+        if (questions.isNotEmpty) {
+          // 按 created_at 優先排序，獲取最新創建的題目
+          final sortedQuestions = List<QuestionModel>.from(questions);
+          sortedQuestions.sort((a, b) {
+            final aCreated = a.createdAt;
+            final bCreated = b.createdAt;
+            final createdCompare = bCreated.compareTo(aCreated);
+            if (createdCompare != 0) {
+              return createdCompare;
+            }
+            final aUpdated = a.updatedAt ?? a.createdAt;
+            final bUpdated = b.updatedAt ?? b.createdAt;
+            return bUpdated.compareTo(aUpdated);
+          });
           
-          // 計算當前階段：直接使用題目的 stage 欄位（學生在ChatGPT對話中選擇的階段）
-          // 如果有多個題目，使用最新的題目所在的階段（按 updated_at 排序）
-          int currentStage = 1;
+          final latestQuestion = sortedQuestions.first;
+          currentStage = latestQuestion.stage;
+          final currentGrammarTopicId = latestQuestion.grammarTopicId;
+          final currentGrammarTopicName = topicMap[currentGrammarTopicId] ?? '未知課程';
+          final isStage4Completed = latestQuestion.completedStages?.containsKey(4) ?? false;
           
-          if (questions.isNotEmpty) {
-            // 打印所有題目的原始數據（用於調試）
-            print('Student ${student['student_name']}: All questions before sorting:');
-            for (var q in questions) {
-              print('  - Question ${q.id.substring(0, 8)}: stage=${q.stage}, updated_at=${q.updatedAt}, created_at=${q.createdAt}');
+          final stageDuration = latestQuestion.updatedAt != null
+              ? DateTime.now().difference(latestQuestion.updatedAt!)
+              : DateTime.now().difference(latestQuestion.createdAt);
+          
+          double avgStage = 0;
+          int totalQuestions = questions.length;
+          if (totalQuestions > 0) {
+            for (var question in questions) {
+              avgStage += question.stage;
             }
-            
-            // 按 created_at 優先排序，獲取最新創建的題目（代表當前活躍的課程）
-            // 如果 created_at 相同，再按 updated_at 排序
-            // 這樣可以確保新課程的題目優先於舊課程的題目，即使舊課程的題目最近有更新
-            final sortedQuestions = List<QuestionModel>.from(questions);
-            sortedQuestions.sort((a, b) {
-              // 首先按 created_at 降序排序（最新創建的在前）
-              final aCreated = a.createdAt;
-              final bCreated = b.createdAt;
-              final createdCompare = bCreated.compareTo(aCreated);
-              if (createdCompare != 0) {
-                return createdCompare;
-              }
-              // 如果 created_at 相同，再按 updated_at 降序排序
-              final aUpdated = a.updatedAt ?? a.createdAt;
-              final bUpdated = b.updatedAt ?? b.createdAt;
-              return bUpdated.compareTo(aUpdated);
-            });
-            
-            // 使用最新創建題目的 stage 和 grammar_topic_id（代表當前活躍的課程）
-            final latestQuestion = sortedQuestions.first;
-            currentStage = latestQuestion.stage;
-            final currentGrammarTopicId = latestQuestion.grammarTopicId;
-            final currentGrammarTopicName = topicMap[currentGrammarTopicId] ?? '未知課程';
-            
-            // 檢查最新題目是否完成了階段四
-            final isStage4Completed = latestQuestion.completedStages?.containsKey(4) ?? false;
-            
-            // 計算在當前階段的停留時間
-            // 使用 updated_at 作為進入當前階段的時間（當 stage 改變時，updated_at 會更新）
-            final stageDuration = latestQuestion.updatedAt != null
-                ? DateTime.now().difference(latestQuestion.updatedAt!)
-                : DateTime.now().difference(latestQuestion.createdAt);
-            
-            print('Student ${student['student_name']}: Current stage = $currentStage, current course = $currentGrammarTopicName, stage 4 completed = $isStage4Completed, stage duration = ${stageDuration.inMinutes} minutes (latest question: ${latestQuestion.id.substring(0, 8)}, stage=${latestQuestion.stage}, grammar_topic_id=$currentGrammarTopicId, updated_at=${latestQuestion.updatedAt}, created_at=${latestQuestion.createdAt})');
-            
-            // 打印排序後的前3個題目（用於調試）
-            print('Student ${student['student_name']}: Top 3 questions after sorting (by created_at, then updated_at):');
-            for (var q in sortedQuestions.take(3)) {
-              print('  - Question ${q.id.substring(0, 8)}: course=${topicMap[q.grammarTopicId] ?? q.grammarTopicId}, stage=${q.stage}, grammar_topic_id=${q.grammarTopicId}, completed_stages=${q.completedStages}, updated_at=${q.updatedAt}, created_at=${q.createdAt}');
-            }
-            print('Student ${student['student_name']}: Selected latest question: course=${currentGrammarTopicName}, stage=$currentStage');
-            
-            // 計算平均階段（加權平均）
-            double avgStage = 0;
-            int totalQuestions = questions.length;
-            if (totalQuestions > 0) {
-              for (var question in questions) {
-                avgStage += question.stage;
-              }
-              avgStage = avgStage / totalQuestions;
-            } else {
-              avgStage = 1.0;
-            }
-            
-            enrichedProgress.add({
-              ...student,
-              'current_stage': currentStage, // 更新為正確的當前階段
-              'current_grammar_topic_id': currentGrammarTopicId, // 當前課程 ID
-              'current_grammar_topic_name': currentGrammarTopicName, // 當前課程名稱
-              'is_stage_4_completed': isStage4Completed, // 是否完成階段四
-              'stage_duration': stageDuration, // 在當前階段的停留時間
-              'stage_updated_at': latestQuestion.updatedAt?.toIso8601String() ?? latestQuestion.createdAt.toIso8601String(), // 進入當前階段的時間
-              'stage_distribution': stageCounts,
-              'completed_stages_count': completedStagesCount,
-              'total_questions': totalQuestions,
-              'average_stage': avgStage,
-              'total_completed_stages': totalCompletedStages,
-              'max_completed_stage': maxCompletedStage,
-            });
+            avgStage = avgStage / totalQuestions;
           } else {
-            print('Student ${student['student_name']}: No questions, default stage = 1');
-            
-            // 計算平均階段（加權平均）
-            double avgStage = 1.0;
-            int totalQuestions = 0;
-            
-            // 即使沒有題目，也要添加基本信息
-            enrichedProgress.add({
-              ...student,
-              'current_stage': 1,
-              'current_grammar_topic_id': null,
-              'current_grammar_topic_name': null,
-              'is_stage_4_completed': false, // 沒有題目，未完成階段四
-              'stage_duration': null, // 沒有題目，無法計算停留時間
-              'stage_updated_at': null,
-              'stage_distribution': stageCounts,
-              'completed_stages_count': completedStagesCount,
-              'total_questions': totalQuestions,
-              'average_stage': avgStage,
-              'total_completed_stages': 0,
-              'max_completed_stage': 0,
-            });
+            avgStage = 1.0;
           }
-        } catch (e) {
-          print('Error enriching student ${studentId}: $e');
-          enrichedProgress.add(student);
+          
+          enrichedProgress.add({
+            ...student,
+            'current_stage': currentStage,
+            'current_grammar_topic_id': currentGrammarTopicId,
+            'current_grammar_topic_name': currentGrammarTopicName,
+            'is_stage_4_completed': isStage4Completed,
+            'stage_duration': stageDuration,
+            'stage_updated_at': latestQuestion.updatedAt?.toIso8601String() ?? latestQuestion.createdAt.toIso8601String(),
+            'stage_distribution': stageCounts,
+            'completed_stages_count': completedStagesCount,
+            'total_questions': totalQuestions,
+            'average_stage': avgStage,
+            'total_completed_stages': totalCompletedStages,
+            'max_completed_stage': maxCompletedStage,
+          });
+        } else {
+          enrichedProgress.add({
+            ...student,
+            'current_stage': 1,
+            'current_grammar_topic_id': null,
+            'current_grammar_topic_name': null,
+            'is_stage_4_completed': false,
+            'stage_duration': null,
+            'stage_updated_at': null,
+            'stage_distribution': stageCounts,
+            'completed_stages_count': completedStagesCount,
+            'total_questions': 0,
+            'average_stage': 1.0,
+            'total_completed_stages': 0,
+            'max_completed_stage': 0,
+          });
         }
       }
       
@@ -741,6 +718,7 @@ class _DashboardTabState extends State<DashboardTab> {
   @override
   Widget build(BuildContext context) {
     final authProvider = Provider.of<AuthProvider>(context);
+    final classProvider = Provider.of<ClassProvider>(context);
     final user = authProvider.currentUser;
 
     return Scaffold(
@@ -769,9 +747,9 @@ class _DashboardTabState extends State<DashboardTab> {
                     child: Row(
                       children: [
                         FutureBuilder<String>(
-                          future: user != null ? UserAnimalHelper.getUserAnimal(user.id) : Future.value('👤'),
+                          future: user != null ? UserAnimalHelper.getUserAnimal(user.id) : Future.value(''),
                           builder: (context, snapshot) {
-                            final animal = snapshot.data ?? (user != null ? UserAnimalHelper.getDefaultAnimal(user.id) : '👤');
+                            final animal = snapshot.data ?? (user != null ? UserAnimalHelper.getDefaultAnimal(user.id) : '');
                             return CircleAvatar(
                               radius: 28,
                               backgroundColor: Colors.green.shade400,
@@ -815,12 +793,25 @@ class _DashboardTabState extends State<DashboardTab> {
                     children: [
                       IconButton(
                         icon: const Icon(Icons.refresh),
-                        onPressed: _loadStudentsProgress,
+                        onPressed: () {
+                          _autoRefreshProvider.forceRefreshNow();
+                        },
                       ),
                       IconButton(
-                        icon: const Icon(Icons.notifications_outlined),
+                        icon: const Icon(Icons.emoji_events),
                         onPressed: () {
-                          // TODO: 通知功能
+                          _showAwardBadgeDialog(context);
+                        },
+                      ),
+                      IconButton(
+                        tooltip: _isTopPanelCollapsed ? '展開篩選與資訊' : '收起篩選與資訊',
+                        icon: Icon(
+                          _isTopPanelCollapsed ? Icons.unfold_more : Icons.unfold_less,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _isTopPanelCollapsed = !_isTopPanelCollapsed;
+                          });
                         },
                       ),
                     ],
@@ -828,25 +819,102 @@ class _DashboardTabState extends State<DashboardTab> {
                 ],
               ),
             ),
-            // 統計卡片
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: Colors.amber.shade400,
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
+              child: Selector<TeacherAutoRefreshProvider, int>(
+                selector: (_, provider) => provider.remainingSeconds,
+                builder: (context, value, _) {
+                  return Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '下次自動刷新：$value 秒',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey[700],
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
-                  ],
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  children: [
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 8),
+            AnimatedCrossFade(
+              duration: const Duration(milliseconds: 220),
+              crossFadeState: _isTopPanelCollapsed
+                  ? CrossFadeState.showSecond
+                  : CrossFadeState.showFirst,
+              firstChild: Column(
+                children: [
+                  // 班級選擇器
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.05),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.class_, color: Colors.indigo.shade600),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<String>(
+                                value: _selectedClassId,
+                                hint: const Text('所有班級'),
+                                isExpanded: true,
+                                items: [
+                                  const DropdownMenuItem<String>(
+                                    value: null,
+                                    child: Text('所有班級'),
+                                  ),
+                                  ...classProvider.classes.map((classModel) => DropdownMenuItem<String>(
+                                    value: classModel.id,
+                                    child: Text(classModel.name),
+                                  )),
+                                ],
+                                onChanged: (value) {
+                                  setState(() {
+                                    _selectedClassId = value;
+                                  });
+                                  _loadStudentsProgress();
+                                },
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  // 統計卡片
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.shade400,
+                        borderRadius: BorderRadius.circular(20),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.1),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceAround,
+                        children: [
                     Column(
                       children: [
                         Row(
@@ -982,15 +1050,23 @@ class _DashboardTabState extends State<DashboardTab> {
                         ),
                       ],
                     ),
-                  ],
-                ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
+              secondChild: const SizedBox.shrink(),
             ),
-            const SizedBox(height: 24),
+            SizedBox(height: _isTopPanelCollapsed ? 8 : 24),
             // 學生列表
             Expanded(
               child: _isLoading
-                  ? const Center(child: CircularProgressIndicator())
+                  ? const Center(
+                      child: _CuteLoadingIndicator(
+                        label: '整理資料中...',
+                      ),
+                    )
                   : _studentsProgress.isEmpty
                       ? Center(
                           child: Text(
@@ -1247,16 +1323,6 @@ class _DashboardTabState extends State<DashboardTab> {
         ),
         ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showAwardBadgeDialog(context),
-        backgroundColor: Colors.amber.shade600,
-        icon: const Icon(Icons.emoji_events, color: Colors.white),
-        label: const Text(
-          '授予徽章',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-        ),
-      ),
-      floatingActionButtonLocation: _CustomFloatingActionButtonLocation(),
     );
   }
 
@@ -1510,21 +1576,66 @@ class _DashboardTabState extends State<DashboardTab> {
   }
 }
 
-class _CustomFloatingActionButtonLocation extends FloatingActionButtonLocation {
-  const _CustomFloatingActionButtonLocation();
+class _CuteLoadingIndicator extends StatefulWidget {
+  final String label;
+
+  const _CuteLoadingIndicator({required this.label});
 
   @override
-  Offset getOffset(ScaffoldPrelayoutGeometry scaffoldGeometry) {
-    // 導航欄高度約 80px + 底部間距 16px + SafeArea + 額外安全間距
-    // 使用 minInsets.bottom 獲取底部安全區域
-    final double safeAreaBottom = scaffoldGeometry.minInsets.bottom;
-    final double navigationBarHeight = 80 + 16 + safeAreaBottom + 30;
-    final double bottom = scaffoldGeometry.scaffoldSize.height -
-        scaffoldGeometry.floatingActionButtonSize.height -
-        navigationBarHeight;
-    final double right = scaffoldGeometry.scaffoldSize.width -
-        scaffoldGeometry.floatingActionButtonSize.width -
-        16; // 右邊距
-    return Offset(right, bottom);
+  State<_CuteLoadingIndicator> createState() => _CuteLoadingIndicatorState();
+}
+
+class _CuteLoadingIndicatorState extends State<_CuteLoadingIndicator>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        final t = _controller.value * 2 * math.pi;
+        final o1 = 0.4 + 0.6 * ((math.sin(t) + 1) / 2);
+        final o2 = 0.4 + 0.6 * ((math.sin(t + 0.8) + 1) / 2);
+        final o3 = 0.4 + 0.6 * ((math.sin(t + 1.6) + 1) / 2);
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Opacity(opacity: o1, child: const Icon(Icons.pets, size: 24, color: Colors.orange)),
+                const SizedBox(width: 8),
+                Opacity(opacity: o2, child: const Icon(Icons.pets, size: 24, color: Colors.orange)),
+                const SizedBox(width: 8),
+                Opacity(opacity: o3, child: const Icon(Icons.pets, size: 24, color: Colors.orange)),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              widget.label,
+              style: TextStyle(fontSize: 13, color: Colors.grey[700], fontWeight: FontWeight.w500),
+            ),
+          ],
+        );
+      },
+    );
   }
 }
+
+

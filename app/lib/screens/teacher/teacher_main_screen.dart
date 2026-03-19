@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cupertino_native_better/cupertino_native_better.dart';
-import 'tabs/courses_tab.dart';
+import 'tabs/classes_tab.dart';
 import 'tabs/dashboard_tab.dart';
 import 'tabs/statistics_tab.dart';
 import '../student/tabs/profile_tab.dart';
@@ -30,7 +30,7 @@ class _TeacherMainScreenState extends State<TeacherMainScreen> {
             child: IndexedStack(
               index: _currentIndex,
               children: const [
-                CoursesTab(),
+                ClassesTab(),
                 DashboardTab(),
                 StatisticsTab(),
                 ProfileTab(),
@@ -48,9 +48,9 @@ class _TeacherMainScreenState extends State<TeacherMainScreen> {
                 backgroundColor: Colors.transparent,
                 items: const [
                   CNTabBarItem(
-                    label: '課程',
-                    icon: CNSymbol('book'),
-                    activeIcon: CNSymbol('book.fill'),
+                    label: '班級',
+                    icon: CNSymbol('person.3'),
+                    activeIcon: CNSymbol('person.3.fill'),
                   ),
                   CNTabBarItem(
                     label: '儀錶板',

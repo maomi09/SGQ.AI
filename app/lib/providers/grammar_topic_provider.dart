@@ -162,8 +162,8 @@ class GrammarTopicProvider with ChangeNotifier {
         notifiedTopicIds.add(topicId);
         await prefs.setStringList('notified_topic_ids', notifiedTopicIds);
         
-        // 重新載入課程列表
-        await loadTopics();
+        // 重新載入課程列表（保持目前班級篩選）
+        await loadTopics(classId: _currentClassId);
       }
     } catch (e) {
       print('處理 Realtime 新課程事件失敗: $e');
@@ -261,13 +261,18 @@ class GrammarTopicProvider with ChangeNotifier {
     _badgesChannel = null;
   }
 
-  Future<void> loadTopics() async {
+  String? _currentClassId;
+  String? get currentClassId => _currentClassId;
+
+  Future<void> loadTopics({String? classId}) async {
+    final effectiveClassId = classId ?? _currentClassId;
     _isLoading = true;
+    _currentClassId = effectiveClassId;
     notifyListeners();
 
     try {
       final previousTopicIds = _topics.map((t) => t.id).toSet();
-      _topics = await _supabaseService.getGrammarTopics();
+      _topics = await _supabaseService.getGrammarTopics(classId: effectiveClassId);
       
       // 檢查是否有新課程（學生端）
       final newTopics = _topics.where((topic) => !previousTopicIds.contains(topic.id)).toList();
@@ -324,9 +329,9 @@ class GrammarTopicProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> createTopic(String title, String description, String teacherId) async {
-    await _supabaseService.createGrammarTopic(title, description, teacherId);
-    await loadTopics();
+  Future<void> createTopic(String title, String description, String teacherId, {String? classId}) async {
+    await _supabaseService.createGrammarTopic(title, description, teacherId, classId: classId);
+    await loadTopics(classId: _currentClassId);
     
     // 注意：通知會在學生端載入課程時自動顯示
     // 不需要在老師端發送通知，因為本地通知只能在發送設備上顯示
@@ -334,13 +339,13 @@ class GrammarTopicProvider with ChangeNotifier {
 
   Future<void> updateTopic(String id, String title, String description) async {
     await _supabaseService.updateGrammarTopic(id, title, description);
-    await loadTopics();
+    await loadTopics(classId: _currentClassId);
   }
 
   Future<void> deleteTopic(String id) async {
     try {
       await _supabaseService.deleteGrammarTopic(id);
-      await loadTopics();
+      await loadTopics(classId: _currentClassId);
     } catch (e) {
       rethrow;
     }

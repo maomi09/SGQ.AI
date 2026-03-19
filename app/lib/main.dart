@@ -10,6 +10,8 @@ import 'providers/question_provider.dart';
 import 'providers/badge_provider.dart';
 import 'providers/chat_provider.dart';
 import 'providers/ai_chat_settings_provider.dart';
+import 'providers/class_provider.dart';
+import 'providers/teacher_auto_refresh_provider.dart';
 import 'services/notification_service.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/auth/forgot_password_screen.dart';
@@ -72,6 +74,8 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => BadgeProvider()),
         ChangeNotifierProvider(create: (_) => ChatProvider()),
         ChangeNotifierProvider(create: (_) => AiChatSettingsProvider()),
+        ChangeNotifierProvider(create: (_) => ClassProvider()),
+        ChangeNotifierProvider(create: (_) => TeacherAutoRefreshProvider()),
       ],
       child: const _LifecycleWatcher(),
     );

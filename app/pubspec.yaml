@@ -63,7 +63,7 @@ dependencies:
   sign_in_with_apple: ^6.1.3
 
   # iOS 26 Liquid Glass 原生元件（底部 bar、返回鍵）
-  cupertino_native_better: ^1.3.4
+  cupertino_native_better: ^1.3.5
   
   # Notifications
   flutter_local_notifications: ^17.0.0

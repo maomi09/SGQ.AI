@@ -7,14 +7,17 @@ import 'package:cupertino_native_better/cupertino_native_better.dart';
 import '../../../providers/auth_provider.dart';
 import '../../../providers/grammar_topic_provider.dart';
 import '../../../providers/ai_chat_settings_provider.dart';
+import '../../../providers/class_provider.dart';
 import '../../../services/supabase_service.dart';
 import '../../../utils/user_animal_helper.dart';
 import '../../../utils/error_handler.dart';
 import '../edit_profile_screen.dart';
+import '../join_class_screen.dart';
 import '../../teacher/student_management_screen.dart';
 import '../../privacy_policy_screen.dart';
 import '../../report_bug_screen.dart';
 import '../../account_deletion_screen.dart';
+import '../../badges/badges_screen.dart';
 
 class ProfileTab extends StatefulWidget {
   const ProfileTab({super.key});
@@ -67,6 +70,83 @@ class _ProfileTabState extends State<ProfileTab> {
     }
   }
 
+  void _navigateToJoinClass(BuildContext context) async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const JoinClassScreen()),
+    );
+    
+    if (result == true && mounted) {
+      // 重新載入班級資訊
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      final classProvider = Provider.of<ClassProvider>(context, listen: false);
+      if (authProvider.currentUser != null) {
+        await classProvider.loadStudentClass(authProvider.currentUser!.id);
+      }
+    }
+  }
+
+  void _showLeaveClassConfirmation(BuildContext context, ClassProvider classProvider) {
+    final studentClass = classProvider.studentClass;
+    if (studentClass == null) return;
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        title: const Text('確認退出班級'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('確定要退出班級「${studentClass.name}」嗎？'),
+            const SizedBox(height: 12),
+            Text(
+              '退出後您將無法查看此班級的課程，\n但您的學習紀錄會保留。',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey[600],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              
+              final authProvider = Provider.of<AuthProvider>(context, listen: false);
+              if (authProvider.currentUser != null) {
+                final success = await classProvider.leaveClass(authProvider.currentUser!.id);
+                if (success && mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: const Text('已退出班級'),
+                      backgroundColor: Colors.green,
+                      behavior: SnackBarBehavior.floating,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  );
+                }
+              }
+            },
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.red,
+            ),
+            child: const Text('確認退出'),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -143,11 +223,27 @@ class _ProfileTabState extends State<ProfileTab> {
                       ],
                     ),
                   ),
-                  // 右側圖標（僅學生顯示通知）
+                  // 右側圖標（僅學生顯示）
                   if (user.role == 'student')
-                    IconButton(
-                      icon: const Icon(Icons.notifications_outlined),
-                      onPressed: () => _showTeacherCommentsDialog(context, user.id),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.stars),
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => const BadgesScreen(),
+                              ),
+                            );
+                          },
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.notifications_outlined),
+                          onPressed: () => _showTeacherCommentsDialog(context, user.id),
+                        ),
+                      ],
                     ),
                 ],
               ),
@@ -390,6 +486,91 @@ class _ProfileTabState extends State<ProfileTab> {
                       title: '身分',
                       value: user.role == 'student' ? '學生' : '老師',
                     ),
+                    // 班級資訊（僅學生顯示）
+                    if (user.role == 'student') ...[
+                      const SizedBox(height: 12),
+                      Consumer<ClassProvider>(
+                        builder: (context, classProvider, child) {
+                          final studentClass = classProvider.studentClass;
+                          return Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(16),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.05),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    color: Colors.indigo.shade50,
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Icon(
+                                    Icons.class_,
+                                    color: Colors.indigo.shade600,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const Text(
+                                        '班級',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.grey,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        studentClass?.name ?? '尚未加入班級',
+                                        style: const TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w600,
+                                          color: Color(0xFF1F2937),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                if (studentClass != null)
+                                  TextButton(
+                                    onPressed: () => _showLeaveClassConfirmation(context, classProvider),
+                                    child: Text(
+                                      '退出班級',
+                                      style: TextStyle(
+                                        color: Colors.red.shade600,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                  )
+                                else
+                                  TextButton(
+                                    onPressed: () => _navigateToJoinClass(context),
+                                    child: Text(
+                                      '加入班級',
+                                      style: TextStyle(
+                                        color: Colors.indigo.shade600,
+                                        fontSize: 14,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ],
                     const SizedBox(height: 12),
                     GestureDetector(
                       onTap: () {
@@ -822,7 +1003,9 @@ class _ProfileTabState extends State<ProfileTab> {
       
       // 獲取課程資訊
       final grammarTopicProvider = Provider.of<GrammarTopicProvider>(context, listen: false);
-      await grammarTopicProvider.loadTopics();
+      await grammarTopicProvider.loadTopics(
+        classId: grammarTopicProvider.currentClassId,
+      );
       final topics = grammarTopicProvider.topics;
       final topicMap = <String, String>{};
       for (var topic in topics) {
