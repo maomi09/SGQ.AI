@@ -4,6 +4,8 @@ import '../../../providers/grammar_topic_provider.dart';
 import '../../../providers/ai_chat_settings_provider.dart';
 import '../../../providers/question_provider.dart';
 import '../../../providers/auth_provider.dart';
+import '../../../providers/class_provider.dart';
+import '../../../services/supabase_service.dart';
 import '../../../models/question_model.dart';
 import '../../../utils/user_animal_helper.dart';
 import '../../chatgpt/chatgpt_chat_screen.dart';
@@ -17,6 +19,7 @@ class QuestionGenerationTab extends StatefulWidget {
 }
 
 class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
+  final SupabaseService _supabaseService = SupabaseService();
   final _questionController = TextEditingController();
   final _optionAController = TextEditingController();
   final _optionBController = TextEditingController();
@@ -28,6 +31,9 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
   String? _selectedCorrectAnswer;
   QuestionModel? _editingQuestion;
   bool _isRefreshing = false;
+  bool? _lastAiEnabledState;
+  bool _isAiStatusDialogShowing = false;
+  bool _isStudentCompletionConfirmed = false;
 
   @override
   void initState() {
@@ -76,9 +82,88 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
 
     if (grammarTopicProvider.selectedTopic != null && authProvider.currentUser != null) {
+      await _syncAiSetting();
+      _isStudentCompletionConfirmed = await _supabaseService
+          .isStudentAttentionResolved(
+            authProvider.currentUser!.id,
+            grammarTopicId: grammarTopicProvider.selectedTopic!.id,
+          );
       await questionProvider.loadQuestions(
         authProvider.currentUser!.id,
         grammarTopicId: grammarTopicProvider.selectedTopic!.id,
+      );
+    }
+  }
+
+  Future<void> _syncAiSetting() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final classProvider = Provider.of<ClassProvider>(context, listen: false);
+    final aiSettings = Provider.of<AiChatSettingsProvider>(context, listen: false);
+    final user = authProvider.currentUser;
+    if (user == null || user.role != 'student') return;
+    await aiSettings.refreshForStudent(
+      studentId: user.id,
+      classId: classProvider.studentClass?.id ?? user.classId,
+    );
+  }
+
+  Future<void> _showAiHelperStatusDialog(bool isEnabled) async {
+    if (!mounted || _isAiStatusDialogShowing) return;
+    _isAiStatusDialogShowing = true;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(isEnabled ? 'AI 小幫手已開啟' : 'AI 小幫手已關閉'),
+        content: Text(
+          isEnabled ? '老師已開啟 AI 小幫手，您現在可以使用。' : '老師已關閉 AI 小幫手，暫時無法使用。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
+    _isAiStatusDialogShowing = false;
+  }
+
+  Future<void> _confirmStudentCompletion() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final grammarTopicProvider =
+        Provider.of<GrammarTopicProvider>(context, listen: false);
+    final user = authProvider.currentUser;
+    if (user == null || grammarTopicProvider.selectedTopic == null) return;
+    try {
+      await _supabaseService.markStudentAttentionResolved(
+        user.id,
+        grammarTopicId: grammarTopicProvider.selectedTopic!.id,
+        reason: 'student_manual_completion',
+      );
+      if (!mounted) return;
+      setState(() {
+        _isStudentCompletionConfirmed = true;
+      });
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('已確認完成'),
+          content: const Text('此課程已送出完成確認，老師端會立即看到您的狀態。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('知道了'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('送出失敗：$e'),
+          backgroundColor: Colors.red,
+        ),
       );
     }
   }
@@ -124,6 +209,19 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('請輸入題目'),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (_explanationController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('請輸入解釋'),
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(10),
@@ -204,7 +302,7 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
         'type': _selectedType.toString().split('.').last,
         'options': options,
         'correct_answer': correctAnswer,
-        'explanation': _explanationController.text.isEmpty ? null : _explanationController.text,
+        'explanation': _explanationController.text.trim(),
       });
       
       if (mounted) {
@@ -230,7 +328,7 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
         question: _questionController.text,
         options: options,
         correctAnswer: correctAnswer,
-        explanation: _explanationController.text.isEmpty ? null : _explanationController.text,
+        explanation: _explanationController.text.trim(),
         stage: 1,
         createdAt: DateTime.now(),
       );
@@ -485,6 +583,16 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
                   // 右側圖標
                   Consumer<AiChatSettingsProvider>(
                     builder: (context, aiSettings, _) {
+                      if (_lastAiEnabledState == null) {
+                        _lastAiEnabledState = aiSettings.isEnabled;
+                      } else if (_lastAiEnabledState != aiSettings.isEnabled) {
+                        final isEnabled = aiSettings.isEnabled;
+                        _lastAiEnabledState = isEnabled;
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (!mounted) return;
+                          _showAiHelperStatusDialog(isEnabled);
+                        });
+                      }
                       return Row(
                         children: [
                           IconButton(
@@ -529,6 +637,17 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
                                 showChatDialog(context);
                               },
                             ),
+                          IconButton(
+                            icon: Icon(
+                              _isStudentCompletionConfirmed
+                                  ? Icons.verified
+                                  : Icons.task_alt,
+                            ),
+                            tooltip: _isStudentCompletionConfirmed
+                                ? '本課程已確認，可再次更新時間'
+                                : '手動確認完成',
+                            onPressed: _confirmStudentCompletion,
+                          ),
                         ],
                       );
                     },
@@ -795,7 +914,7 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
                                       const SizedBox(height: 16),
                                       _buildTextField(
                                         controller: _explanationController,
-                                        label: '解釋（選填）',
+                                        label: '解釋（必填）',
                                         maxLines: 4,
                                       ),
                                       const SizedBox(height: 16),
@@ -1210,7 +1329,7 @@ class _QuestionGenerationTabState extends State<QuestionGenerationTab> {
                         const SizedBox(height: 16),
                         _buildTextField(
                           controller: _explanationController,
-                          label: '解釋（選填）',
+                          label: '解釋（必填）',
                           maxLines: 4,
                         ),
                         const SizedBox(height: 24),

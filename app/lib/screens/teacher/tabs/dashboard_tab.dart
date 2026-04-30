@@ -9,7 +9,6 @@ import '../../../providers/class_provider.dart';
 import '../../../services/supabase_service.dart';
 import '../../../models/question_model.dart';
 import '../../../models/badge_model.dart';
-import '../../../models/class_model.dart';
 import '../../../utils/user_animal_helper.dart';
 import '../../../utils/error_handler.dart';
 import '../../../providers/teacher_auto_refresh_provider.dart';
@@ -25,10 +24,12 @@ class _DashboardTabState extends State<DashboardTab> {
   final SupabaseService _supabaseService = SupabaseService();
   List<Map<String, dynamic>> _studentsProgress = [];
   bool _isLoading = true;
-  Set<String> _resolvedStudentIds = {}; // 已標記為「已完成」的學生 ID
+  Set<String> _resolvedStudentTopicKeys = {}; // 已標記為「已完成」的學生-課程鍵值
   Map<String, bool> _studentsOnlineStatus = {}; // 學生的登入狀態
+  Map<String, bool> _studentsAiUsageStatus = {}; // 學生是否使用過 AI 小幫手
   String? _selectedClassId; // 選中的班級 ID
   bool _isTopPanelCollapsed = false; // 頂部篩選與資訊字卡收合狀態
+  Map<String, int> _topicCompletionTargets = {};
 
   late TeacherAutoRefreshProvider _autoRefreshProvider;
   int _lastRefreshToken = -1;
@@ -79,7 +80,8 @@ class _DashboardTabState extends State<DashboardTab> {
 
     try {
       // 同時載入已標記為「已完成」的學生 ID
-      _resolvedStudentIds = await _supabaseService.getResolvedStudentIds();
+      _resolvedStudentTopicKeys =
+          await _supabaseService.getResolvedStudentTopicKeys();
       
       // 根據選中的班級篩選學生
       final progress = await _supabaseService.getAllStudentsProgress(classId: _selectedClassId);
@@ -87,16 +89,20 @@ class _DashboardTabState extends State<DashboardTab> {
       // 獲取所有學生的登入狀態
       final studentIds = progress.map((s) => s['student_id'] as String).toList();
       _studentsOnlineStatus = await _supabaseService.getStudentsOnlineStatus(studentIds);
+      _studentsAiUsageStatus = await _supabaseService.getStudentsAiUsageStatus(studentIds);
       print('Dashboard: Received ${progress.length} students');
-      
+
       // 獲取所有課程，建立 ID 到課程名稱的映射
       final grammarTopicProvider = Provider.of<GrammarTopicProvider>(context, listen: false);
-      await grammarTopicProvider.loadTopics();
+      await grammarTopicProvider.loadTopics(classId: _selectedClassId);
       final topics = grammarTopicProvider.topics;
       final topicMap = <String, String>{};
+      final topicTargetMap = <String, int>{};
       for (var topic in topics) {
         topicMap[topic.id] = topic.title;
+        topicTargetMap[topic.id] = topic.completionQuestionTarget;
       }
+      _topicCompletionTargets = topicTargetMap;
       print('Dashboard: Loaded ${topics.length} grammar topics');
       
       // 批量查詢所有學生的題目（優化：一次查詢取代 N 次查詢）
@@ -154,13 +160,21 @@ class _DashboardTabState extends State<DashboardTab> {
           final currentGrammarTopicId = latestQuestion.grammarTopicId;
           final currentGrammarTopicName = topicMap[currentGrammarTopicId] ?? '未知課程';
           final isStage4Completed = latestQuestion.completedStages?.containsKey(4) ?? false;
+          final totalQuestions = questions.length;
+          final topicCompletionTarget =
+              _topicCompletionTargets[currentGrammarTopicId] ?? 5;
+          final resolvedKey = '$studentId:$currentGrammarTopicId';
+          final hasManualCompletion =
+              _resolvedStudentTopicKeys.contains(resolvedKey);
+          final isCompletedByTarget = totalQuestions >= topicCompletionTarget;
+          final isOverallCompleted =
+              isStage4Completed || hasManualCompletion || isCompletedByTarget;
           
           final stageDuration = latestQuestion.updatedAt != null
               ? DateTime.now().difference(latestQuestion.updatedAt!)
               : DateTime.now().difference(latestQuestion.createdAt);
           
           double avgStage = 0;
-          int totalQuestions = questions.length;
           if (totalQuestions > 0) {
             for (var question in questions) {
               avgStage += question.stage;
@@ -176,6 +190,11 @@ class _DashboardTabState extends State<DashboardTab> {
             'current_grammar_topic_id': currentGrammarTopicId,
             'current_grammar_topic_name': currentGrammarTopicName,
             'is_stage_4_completed': isStage4Completed,
+            'has_manual_completion': hasManualCompletion,
+            'is_completed_by_target': isCompletedByTarget,
+            'is_overall_completed': isOverallCompleted,
+            'completion_question_target': topicCompletionTarget,
+            'has_ai_helper_usage': _studentsAiUsageStatus[studentId] ?? false,
             'stage_duration': stageDuration,
             'stage_updated_at': latestQuestion.updatedAt?.toIso8601String() ?? latestQuestion.createdAt.toIso8601String(),
             'stage_distribution': stageCounts,
@@ -192,6 +211,11 @@ class _DashboardTabState extends State<DashboardTab> {
             'current_grammar_topic_id': null,
             'current_grammar_topic_name': null,
             'is_stage_4_completed': false,
+            'has_manual_completion': false,
+            'is_completed_by_target': false,
+            'is_overall_completed': false,
+            'completion_question_target': 5,
+            'has_ai_helper_usage': _studentsAiUsageStatus[studentId] ?? false,
             'stage_duration': null,
             'stage_updated_at': null,
             'stage_distribution': stageCounts,
@@ -239,32 +263,17 @@ class _DashboardTabState extends State<DashboardTab> {
     return duration.inHours > 24;
   }
 
-  bool _isStageAbnormal(Map<String, dynamic> student) {
-    // 檢查是否有學生的階段明顯落後
-    // 條件：有題目但平均階段低於1.5，且最後活動時間超過24小時
-    final totalQuestions = student['total_questions'] as int? ?? 0;
-    final avgStage = student['average_stage'] as double? ?? 1.0;
-    final maxCompletedStage = student['max_completed_stage'] as int? ?? 0;
-    
-    // 如果有題目但進度很慢（平均階段低於1.5且沒有完成任何階段），且停留超過24小時
-    if (totalQuestions > 0 && avgStage < 1.5 && maxCompletedStage == 0) {
-      if (student['last_activity'] != null) {
-        final lastActivity = DateTime.parse(student['last_activity']);
-        final now = DateTime.now();
-        final duration = now.difference(lastActivity);
-        return duration.inHours > 24;
-      }
-    }
-    return false;
+  bool _isOffline(Map<String, dynamic> student) {
+    final studentId = student['student_id'] as String?;
+    if (studentId == null) return true;
+    return !(_studentsOnlineStatus[studentId] ?? false);
   }
 
   bool _hasAlert(Map<String, dynamic> student) {
-    // 如果學生已被標記為「已完成」，則不顯示警告
-    final studentId = student['student_id'] as String?;
-    if (studentId != null && _resolvedStudentIds.contains(studentId)) {
+    if (student['is_overall_completed'] == true) {
       return false;
     }
-    return _isStuck(student) || _isStageAbnormal(student);
+    return _isOffline(student) || _isStuck(student);
   }
 
   String _getStageName(int stage) {
@@ -292,8 +301,15 @@ class _DashboardTabState extends State<DashboardTab> {
     double avgStage,
     bool hasAlert,
     bool isStuck,
-    bool isAbnormal,
+    bool isOffline,
   ) {
+    final totalQuestions = student['total_questions'] as int? ?? 0;
+    final completionTarget = student['completion_question_target'] as int? ?? 5;
+    final hasAiUsage = student['has_ai_helper_usage'] == true;
+    final isCompletedByTarget = student['is_completed_by_target'] == true;
+    final hasManualCompletion = student['has_manual_completion'] == true;
+    final isOverallCompleted = student['is_overall_completed'] == true;
+
     final stage = student['current_stage'] as int? ?? 1;
     final studentId = student['student_id'] as String?;
     
@@ -415,6 +431,16 @@ class _DashboardTabState extends State<DashboardTab> {
                                 ),
                               ),
                             ],
+                            if (student['last_login_at'] != null) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                '最近登入: ${DateFormat('yyyy-MM-dd HH:mm').format(DateTime.parse(student['last_login_at']))}',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.grey[700],
+                                ),
+                              ),
+                            ],
                           ],
                         ),
                       ),
@@ -448,6 +474,40 @@ class _DashboardTabState extends State<DashboardTab> {
                               ),
                             ),
                           ],
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+                      _buildDetailRow(
+                        icon: Icons.numbers,
+                        label: '完成標準題數',
+                        value: '$completionTarget 題',
+                        color: Colors.teal,
+                      ),
+                      const SizedBox(height: 12),
+                      _buildDetailRow(
+                        icon: Icons.quiz_outlined,
+                        label: '已完成題數',
+                        value: '$totalQuestions 題',
+                        color: Colors.indigo,
+                      ),
+                      const SizedBox(height: 12),
+                      _buildDetailRow(
+                        icon: Icons.smart_toy_outlined,
+                        label: 'AI 小幫手使用',
+                        value: hasAiUsage ? '有使用' : '未使用',
+                        color: hasAiUsage ? Colors.green : Colors.grey,
+                      ),
+                      if (isOverallCompleted) ...[
+                        const SizedBox(height: 12),
+                        _buildDetailRow(
+                          icon: Icons.verified,
+                          label: '完成狀態',
+                          value: hasManualCompletion
+                              ? '學生手動確認完成'
+                              : (isCompletedByTarget
+                                  ? '已達完成標準題數'
+                                  : '已完成階段四'),
+                          color: Colors.green,
                         ),
                       ],
                       // 階段停留時間
@@ -574,20 +634,20 @@ class _DashboardTabState extends State<DashboardTab> {
                                 ],
                               ),
                               const SizedBox(height: 8),
-                              if (isStuck)
+                              if (isOffline)
                                 Text(
-                                  '⚠️ 該學生在當前階段停留超過24小時',
+                                  '該學生目前未登入',
                                   style: TextStyle(
                                     fontSize: 14,
                                     color: Colors.red[700],
                                   ),
                                 ),
-                              if (isAbnormal)
+                              if (isStuck)
                                 Text(
-                                  '⚠️ 該學生進度異常，請檢查',
+                                  '該學生在當前階段停留超過24小時',
                                   style: TextStyle(
                                     fontSize: 14,
-                                    color: Colors.orange[700],
+                                    color: Colors.red[700],
                                   ),
                                 ),
                               const SizedBox(height: 12),
@@ -596,9 +656,29 @@ class _DashboardTabState extends State<DashboardTab> {
                                 child: ElevatedButton.icon(
                                   onPressed: () async {
                                     if (studentId == null) return;
+                                    final topicId =
+                                        student['current_grammar_topic_id']
+                                            as String?;
+                                    if (topicId == null ||
+                                        topicId.trim().isEmpty) {
+                                      if (context.mounted) {
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                          const SnackBar(
+                                            content: Text('此學生目前無課程可標記'),
+                                            backgroundColor: Colors.orange,
+                                          ),
+                                        );
+                                      }
+                                      return;
+                                    }
                                     
                                     try {
-                                      await _supabaseService.markStudentAttentionResolved(studentId);
+                                      await _supabaseService
+                                          .markStudentAttentionResolved(
+                                        studentId,
+                                        grammarTopicId: topicId,
+                                      );
                                       if (context.mounted) {
                                         Navigator.of(context).pop();
                                         ScaffoldMessenger.of(context).showSnackBar(
@@ -623,7 +703,7 @@ class _DashboardTabState extends State<DashboardTab> {
                                   },
                                   icon: const Icon(Icons.check_circle, color: Colors.white),
                                   label: const Text(
-                                    '新增完成',
+                                    '老師標記完成',
                                     style: TextStyle(
                                       color: Colors.white,
                                       fontWeight: FontWeight.bold,
@@ -768,7 +848,7 @@ class _DashboardTabState extends State<DashboardTab> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                '學生進度儀錶板',
+                                '儀錶板',
                                 style: TextStyle(
                                   fontSize: 20,
                                   fontWeight: FontWeight.bold,
@@ -776,7 +856,7 @@ class _DashboardTabState extends State<DashboardTab> {
                                 ),
                               ),
                               Text(
-                                '追蹤學生學習進度',
+                                '追蹤進度',
                                 style: TextStyle(
                                   fontSize: 14,
                                   color: Colors.grey,
@@ -801,6 +881,13 @@ class _DashboardTabState extends State<DashboardTab> {
                         icon: const Icon(Icons.emoji_events),
                         onPressed: () {
                           _showAwardBadgeDialog(context);
+                        },
+                      ),
+                      IconButton(
+                        tooltip: '設定課程完成標準題數',
+                        icon: const Icon(Icons.tune),
+                        onPressed: () {
+                          _showCompletionTargetDialog(context);
                         },
                       ),
                       IconButton(
@@ -1032,7 +1119,7 @@ class _DashboardTabState extends State<DashboardTab> {
                             ),
                             const SizedBox(width: 4),
                             Text(
-                              '${_studentsProgress.where((s) => s['is_stage_4_completed'] == true).length}',
+                              '${_studentsProgress.where((s) => s['is_overall_completed'] == true).length}',
                               style: const TextStyle(
                                 fontSize: 32,
                                 fontWeight: FontWeight.bold,
@@ -1088,7 +1175,7 @@ class _DashboardTabState extends State<DashboardTab> {
                             final student = _studentsProgress[index];
                             final hasAlert = _hasAlert(student);
                             final isStuck = _isStuck(student);
-                            final isAbnormal = _isStageAbnormal(student);
+                            final isOffline = _isOffline(student);
                             final stage = student['current_stage'] as int? ?? 1;
                             final avgStage = student['average_stage'] as double? ?? 1.0;
                             final stageColor = _getStageColor(stage.round());
@@ -1097,7 +1184,7 @@ class _DashboardTabState extends State<DashboardTab> {
 
                             return InkWell(
                               onTap: () {
-                                _showStudentDetailDialog(context, student, stageColor, stageDistribution, completedStagesCount, avgStage, hasAlert, isStuck, isAbnormal);
+                                _showStudentDetailDialog(context, student, stageColor, stageDistribution, completedStagesCount, avgStage, hasAlert, isStuck, isOffline);
                               },
                               borderRadius: BorderRadius.circular(16),
                               child: Container(
@@ -1205,6 +1292,24 @@ class _DashboardTabState extends State<DashboardTab> {
                                             ),
                                           ),
                                         ],
+                                        if (student['last_login_at'] != null) ...[
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            '最近登入: ${DateFormat('MM-dd HH:mm').format(DateTime.parse(student['last_login_at']))}',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.grey[600],
+                                            ),
+                                          ),
+                                        ],
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          'AI 小幫手: ${student['has_ai_helper_usage'] == true ? '有使用' : '未使用'}',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: Colors.grey[600],
+                                          ),
+                                        ),
                                         // 顯示當前課程
                                         if (student['current_grammar_topic_name'] != null) ...[
                                           const SizedBox(height: 4),
@@ -1278,7 +1383,31 @@ class _DashboardTabState extends State<DashboardTab> {
                                           ],
                                         ),
                                         // 如果有警告，顯示警告圖示
-                                        if (hasAlert) ...[
+                                        if (student['is_overall_completed'] == true) ...[
+                                          const SizedBox(height: 8),
+                                          Row(
+                                            children: [
+                                              Icon(
+                                                Icons.verified,
+                                                size: 16,
+                                                color: Colors.green[700],
+                                              ),
+                                              const SizedBox(width: 4),
+                                              Expanded(
+                                                child: Text(
+                                                  student['has_manual_completion'] == true
+                                                      ? '學生已手動確認完成'
+                                                      : '已達完成條件',
+                                                  style: TextStyle(
+                                                    fontSize: 12,
+                                                    color: Colors.green[700],
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ] else if (hasAlert) ...[
                                           const SizedBox(height: 8),
                                           Row(
                                             children: [
@@ -1290,7 +1419,9 @@ class _DashboardTabState extends State<DashboardTab> {
                                               const SizedBox(width: 4),
                                               Expanded(
                                                 child: Text(
-                                                  isStuck ? '停留超過24小時' : '進度異常',
+                                                  isOffline
+                                                      ? '未登入'
+                                                      : '停留超過24小時',
                                                   style: TextStyle(
                                                     fontSize: 12,
                                                     color: Colors.red[600],
@@ -1573,6 +1704,118 @@ class _DashboardTabState extends State<DashboardTab> {
     await _supabaseService.createBadge(badge);
     
     // 通知會通過 Realtime 自動發送到學生端，無需在此處發送
+  }
+
+  Future<void> _showCompletionTargetDialog(BuildContext context) async {
+    if (_selectedClassId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('請先選擇班級後再設定課程完成標準'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+    final grammarTopicProvider =
+        Provider.of<GrammarTopicProvider>(context, listen: false);
+    await grammarTopicProvider.loadTopics(classId: _selectedClassId);
+    final topics = grammarTopicProvider.topics;
+    if (topics.isEmpty) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('此班級目前沒有課程可設定'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    String selectedTopicId = topics.first.id;
+    final controller = TextEditingController(
+      text: (_topicCompletionTargets[selectedTopicId] ??
+              topics.first.completionQuestionTarget)
+          .toString(),
+    );
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('設定課程完成標準題數'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<String>(
+                value: selectedTopicId,
+                decoration: const InputDecoration(
+                  labelText: '課程',
+                ),
+                items: topics
+                    .map(
+                      (topic) => DropdownMenuItem<String>(
+                        value: topic.id,
+                        child: Text(topic.title),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) {
+                  if (value == null) return;
+                  setDialogState(() {
+                    selectedTopicId = value;
+                    final target = _topicCompletionTargets[selectedTopicId] ??
+                        topics
+                            .firstWhere((t) => t.id == selectedTopicId)
+                            .completionQuestionTarget;
+                    controller.text = target.toString();
+                  });
+                },
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: '完成標準（題數）',
+                  hintText: '請輸入大於 0 的整數',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () {
+                final parsed = int.tryParse(controller.text.trim());
+                if (parsed == null || parsed <= 0) return;
+                Navigator.of(dialogContext).pop({
+                  'topicId': selectedTopicId,
+                  'target': parsed,
+                });
+              },
+              child: const Text('儲存'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result == null) return;
+    final ok = await _supabaseService.updateGrammarTopicCompletionQuestionTarget(
+      result['topicId'] as String,
+      result['target'] as int,
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(ok ? '完成標準已更新' : '完成標準更新失敗'),
+        backgroundColor: ok ? Colors.green : Colors.red,
+      ),
+    );
+    if (ok) {
+      await _loadStudentsProgress();
+    }
   }
 }
 

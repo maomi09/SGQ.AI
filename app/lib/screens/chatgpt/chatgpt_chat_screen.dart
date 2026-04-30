@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../providers/question_provider.dart';
 import '../../providers/chat_provider.dart';
 import '../../providers/auth_provider.dart';
+import '../../providers/ai_chat_settings_provider.dart';
 import '../../services/chatgpt_service.dart';
 import '../../services/supabase_service.dart';
 import '../../models/question_model.dart';
@@ -27,6 +28,8 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
   bool _showQuestionSelector = true; // 是否顯示題目選擇器
   bool _isStageSelectorExpanded = true; // 階段選擇器是否展開
   Set<String> _shownInfoDialogForQuestions = {}; // 記錄已顯示過提示的題目 ID
+  bool _isClosingForDisabledAi = false;
+  bool _isAiDisabledDialogShowing = false;
 
   bool _hasCheckedQuestion = false;
   bool _hasCheckedDataSharingConsent = false;
@@ -949,6 +952,190 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
     }
   }
 
+  Future<void> _showEditCurrentQuestionDialog() async {
+    if (_currentQuestion == null) return;
+
+    final questionController = TextEditingController(text: _currentQuestion!.question);
+    final explanationController = TextEditingController(
+      text: _currentQuestion!.explanation ?? '',
+    );
+    final optionAController = TextEditingController(
+      text: _currentQuestion!.options != null && _currentQuestion!.options!.isNotEmpty
+          ? _currentQuestion!.options![0]
+          : '',
+    );
+    final optionBController = TextEditingController(
+      text: _currentQuestion!.options != null && _currentQuestion!.options!.length > 1
+          ? _currentQuestion!.options![1]
+          : '',
+    );
+    final optionCController = TextEditingController(
+      text: _currentQuestion!.options != null && _currentQuestion!.options!.length > 2
+          ? _currentQuestion!.options![2]
+          : '',
+    );
+    final optionDController = TextEditingController(
+      text: _currentQuestion!.options != null && _currentQuestion!.options!.length > 3
+          ? _currentQuestion!.options![3]
+          : '',
+    );
+    final correctAnswerController = TextEditingController(
+      text: _currentQuestion!.correctAnswer ?? '',
+    );
+
+    final shouldSave = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('修改目前題目'),
+          content: SizedBox(
+            width: 500,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: questionController,
+                    decoration: const InputDecoration(
+                      labelText: '題目內容',
+                      border: OutlineInputBorder(),
+                    ),
+                    minLines: 3,
+                    maxLines: 6,
+                  ),
+                  const SizedBox(height: 12),
+                  if (_currentQuestion!.type == QuestionType.multipleChoice) ...[
+                    TextField(
+                      controller: optionAController,
+                      decoration: const InputDecoration(
+                        labelText: '選項 A',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: optionBController,
+                      decoration: const InputDecoration(
+                        labelText: '選項 B',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: optionCController,
+                      decoration: const InputDecoration(
+                        labelText: '選項 C',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: optionDController,
+                      decoration: const InputDecoration(
+                        labelText: '選項 D',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  TextField(
+                    controller: correctAnswerController,
+                    decoration: const InputDecoration(
+                      labelText: '正確答案',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: explanationController,
+                    decoration: const InputDecoration(
+                      labelText: '解釋',
+                      border: OutlineInputBorder(),
+                    ),
+                    minLines: 2,
+                    maxLines: 4,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('取消'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('儲存'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (shouldSave != true) return;
+
+    final questionText = questionController.text.trim();
+    final explanationText = explanationController.text.trim();
+    final answerText = correctAnswerController.text.trim();
+    if (questionText.isEmpty || answerText.isEmpty || explanationText.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('題目、答案、解釋不可為空')),
+      );
+      return;
+    }
+
+    final updates = <String, dynamic>{
+      'question': questionText,
+      'correct_answer': answerText,
+      'explanation': explanationText,
+      'updated_at': DateTime.now().toIso8601String(),
+    };
+
+    if (_currentQuestion!.type == QuestionType.multipleChoice) {
+      final options = [
+        optionAController.text.trim(),
+        optionBController.text.trim(),
+        optionCController.text.trim(),
+        optionDController.text.trim(),
+      ];
+      if (options.any((o) => o.isEmpty)) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('選擇題四個選項都要填寫')),
+        );
+        return;
+      }
+      updates['options'] = options;
+    }
+
+    try {
+      await _supabaseService.updateQuestion(_currentQuestion!.id, updates);
+      final questionProvider = Provider.of<QuestionProvider>(context, listen: false);
+      await questionProvider.loadQuestions(
+        _currentQuestion!.studentId,
+        grammarTopicId: _currentQuestion!.grammarTopicId,
+      );
+      final refreshed = questionProvider.questions.firstWhere(
+        (q) => q.id == _currentQuestion!.id,
+        orElse: () => _currentQuestion!,
+      );
+      if (!mounted) return;
+      setState(() {
+        _currentQuestion = refreshed;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('題目已更新，後續對話會使用新版內容')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(ErrorHandler.getSafeErrorMessage(e)), backgroundColor: Colors.red),
+      );
+    }
+  }
+
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
@@ -963,14 +1150,21 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<ChatProvider>(
-      builder: (context, chatProvider, child) {
+    return Consumer2<ChatProvider, AiChatSettingsProvider>(
+      builder: (context, chatProvider, aiSettings, child) {
+        if (!aiSettings.isEnabled && !_isClosingForDisabledAi) {
+          _isClosingForDisabledAi = true;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _showAiDisabledDialogAndClose();
+          });
+        }
+
         final questionProvider = Provider.of<QuestionProvider>(context, listen: false);
         final questions = questionProvider.questions;
         
         return Container(
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: _showQuestionSelector ? Colors.blue.shade50 : Colors.white,
             borderRadius: const BorderRadius.only(
               topLeft: Radius.circular(20),
               topRight: Radius.circular(20),
@@ -1015,8 +1209,14 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
                     ),
                     if (_currentQuestion != null)
                       IconButton(
-                        icon: const Icon(Icons.refresh),
-                        tooltip: '重新選擇題目',
+                        icon: const Icon(Icons.edit_note),
+                        tooltip: '修改當前題目',
+                        onPressed: _showEditCurrentQuestionDialog,
+                      ),
+                    if (_currentQuestion != null)
+                      IconButton(
+                        icon: const Icon(Icons.list_alt),
+                        tooltip: '顯示題目清單',
                         onPressed: () {
                           setState(() {
                             _showQuestionSelector = true;
@@ -1032,34 +1232,33 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
               ),
               // 題目選擇器
               if (_showQuestionSelector)
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  color: Colors.blue.shade50,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        '請選擇題目',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      if (questions.isEmpty)
-                        const Padding(
-                          padding: EdgeInsets.all(16),
-                          child: Center(
-                            child: Text(
-                              '尚未建立任何題目',
-                              style: TextStyle(color: Colors.grey),
-                            ),
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    color: Colors.blue.shade50,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          '請選擇題目',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
                           ),
-                        )
-                      else
-                        SizedBox(
-                          height: 200,
-                          child: ListView.builder(
+                        ),
+                        const SizedBox(height: 12),
+                        if (questions.isEmpty)
+                          const Expanded(
+                            child: Center(
+                              child: Text(
+                                '尚未建立任何題目',
+                                style: TextStyle(color: Colors.grey),
+                              ),
+                            ),
+                          )
+                        else
+                          Expanded(
+                            child: ListView.builder(
                             itemCount: questions.length,
                             itemBuilder: (context, index) {
                               final question = questions[index];
@@ -1084,9 +1283,10 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
                                 ),
                               );
                             },
+                            ),
                           ),
-                        ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               // 階段選擇（可縮放）
@@ -1182,8 +1382,25 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
                                       .toList();
                                   
                                   if (currentStageMessages.isEmpty && !chatProvider.isLoading) {
-                                    return const Center(
-                                      child: Text('該階段尚未開始對話'),
+                                    return Center(
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(24),
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Text(
+                                              '該階段尚未開始對話',
+                                              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                                            ),
+                                            const SizedBox(height: 10),
+                                            Text(
+                                              '可先點上方「修改當前題目」微調內容，再送出階段提示。\n若不知道怎麼問，可直接輸入：請用繁體中文給我一個簡單示例。',
+                                              textAlign: TextAlign.center,
+                                              style: TextStyle(fontSize: 13, color: Colors.grey[700], height: 1.4),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
                                     );
                                   }
                                   
@@ -1395,6 +1612,29 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _showAiDisabledDialogAndClose() async {
+    if (!mounted || _isAiDisabledDialogShowing) return;
+    _isAiDisabledDialogShowing = true;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('AI 小幫手已關閉'),
+        content: const Text('老師已關閉 AI 小幫手，聊天室將自動關閉。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
+    _isAiDisabledDialogShowing = false;
+    if (!mounted) return;
+    if (Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    }
   }
 }
 

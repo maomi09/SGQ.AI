@@ -47,6 +47,8 @@ class ChatGPTService {
       'question': questionModel.question,
       'question_type': questionModel.type.toString().split('.').last, // "multipleChoice" 或 "shortAnswer"
       'stage': stage,
+      'response_language': 'zh-TW',
+      'response_style': 'beginner_friendly',
     };
     
     // 添加選項（如果是選擇題）
@@ -98,6 +100,8 @@ class ChatGPTService {
       'question_type': questionModel.type.toString().split('.').last, // "multipleChoice" 或 "shortAnswer"
       'stage': stage,
       'conversation_history': conversationHistory,
+      'response_language': 'zh-TW',
+      'response_style': 'beginner_friendly',
     };
     
     // 添加選項（如果是選擇題）

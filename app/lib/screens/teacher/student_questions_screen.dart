@@ -443,6 +443,17 @@ class _StudentQuestionsScreenState extends State<StudentQuestionsScreen> with Si
                                                     ),
                                                   ),
                                                 ],
+                                                if (question.explanation != null &&
+                                                    question.explanation!.trim().isNotEmpty) ...[
+                                                  const SizedBox(height: 8),
+                                                  Text(
+                                                    '解釋: ${question.explanation}',
+                                                    style: TextStyle(
+                                                      fontSize: 14,
+                                                      color: Colors.grey[700],
+                                                    ),
+                                                  ),
+                                                ],
                                                 if (question.teacherComment != null) ...[
                                                   const SizedBox(height: 12),
                                                   Container(

@@ -1183,6 +1183,73 @@ class SupabaseService {
     }
   }
 
+  // 更新班級的 AI 小幫手開關（老師端）
+  Future<bool> updateClassAiHelperEnabled(String classId, bool enabled) async {
+    try {
+      await _client
+          .from('classes')
+          .update({
+            'ai_helper_enabled': enabled,
+            'updated_at': DateTime.now().toIso8601String(),
+          })
+          .eq('id', classId);
+      return true;
+    } catch (e) {
+      print('Error updating class ai helper setting: $e');
+      return false;
+    }
+  }
+
+  Future<bool> updateClassCompletionQuestionTarget(
+    String classId,
+    int target,
+  ) async {
+    try {
+      await _client
+          .from('classes')
+          .update({
+            'completion_question_target': target,
+            'updated_at': DateTime.now().toIso8601String(),
+          })
+          .eq('id', classId);
+      return true;
+    } catch (e) {
+      print('Error updating class completion question target: $e');
+      return false;
+    }
+  }
+
+  Future<int> getClassCompletionQuestionTarget(String classId) async {
+    try {
+      final response = await _client
+          .from('classes')
+          .select('completion_question_target')
+          .eq('id', classId)
+          .maybeSingle();
+      if (response == null) return 5;
+      return (response['completion_question_target'] as num?)?.toInt() ?? 5;
+    } catch (e) {
+      print('Error getting class completion question target: $e');
+      return 5;
+    }
+  }
+
+  // 讀取班級 AI 小幫手開關（預設 true）
+  Future<bool> getClassAiHelperEnabled(String classId) async {
+    try {
+      final response = await _client
+          .from('classes')
+          .select('ai_helper_enabled')
+          .eq('id', classId)
+          .maybeSingle();
+      if (response == null) return true;
+      return response['ai_helper_enabled'] as bool? ?? true;
+    } catch (e) {
+      print('Error getting class ai helper setting: $e');
+      return true;
+    }
+  }
+
   // 刪除班級（需先檢查是否有學生）
   Future<bool> deleteClass(String classId) async {
     try {
@@ -1250,6 +1317,25 @@ class SupabaseService {
     } catch (e) {
       print('Error leaving class: $e');
       return false;
+    }
+  }
+
+  // 讀取學生所屬班級的 AI 小幫手開關（無班級時預設關閉）
+  Future<bool> getStudentAiHelperEnabled(String studentId) async {
+    try {
+      final userResponse = await _client
+          .from('users')
+          .select('class_id')
+          .eq('id', studentId)
+          .maybeSingle();
+      final classId = userResponse?['class_id'] as String?;
+      if (classId == null || classId.isEmpty) {
+        return false;
+      }
+      return await getClassAiHelperEnabled(classId);
+    } catch (e) {
+      print('Error getting student ai helper setting: $e');
+      return true;
     }
   }
 
@@ -1377,6 +1463,37 @@ class SupabaseService {
           'description': description,
         })
         .eq('id', id);
+  }
+
+  Future<bool> updateGrammarTopicCompletionQuestionTarget(
+    String grammarTopicId,
+    int target,
+  ) async {
+    try {
+      await _client
+          .from('grammar_topics')
+          .update({'completion_question_target': target})
+          .eq('id', grammarTopicId);
+      return true;
+    } catch (e) {
+      print('Error updating grammar topic completion target: $e');
+      return false;
+    }
+  }
+
+  Future<int> getGrammarTopicCompletionQuestionTarget(String grammarTopicId) async {
+    try {
+      final response = await _client
+          .from('grammar_topics')
+          .select('completion_question_target')
+          .eq('id', grammarTopicId)
+          .maybeSingle();
+      if (response == null) return 5;
+      return (response['completion_question_target'] as num?)?.toInt() ?? 5;
+    } catch (e) {
+      print('Error getting grammar topic completion target: $e');
+      return 5;
+    }
   }
 
   Future<void> deleteGrammarTopic(String id) async {
@@ -1852,6 +1969,11 @@ class SupabaseService {
             questionsByStudent[studentId]!.add(question);
           }
           
+          final studentIds = studentsResponse
+              .map((s) => s['id'] as String)
+              .toList();
+          final latestSessionSignals = await _getLatestSessionSignals(studentIds);
+
           // 建立結果列表
           final List<Map<String, dynamic>> result = [];
           
@@ -1889,6 +2011,7 @@ class SupabaseService {
               'student_name': student['name'] as String? ?? '',
               'student_email': student['email'] as String? ?? '',
               'student_id_number': student['student_id'] as String? ?? '',
+              'last_login_at': latestSessionSignals[studentId]?.toIso8601String(),
               'current_stage': currentStage,
               'last_activity': lastActivity,
               'stuck_duration': null,
@@ -1949,6 +2072,11 @@ class SupabaseService {
         questionsByStudent[studentId]!.add(question);
       }
     
+      final studentIds = (studentsResponse as List)
+          .map((s) => s['id'] as String)
+          .toList();
+      final latestSessionSignals = await _getLatestSessionSignals(studentIds);
+
       // 建立結果列表
       final List<Map<String, dynamic>> result = [];
     
@@ -1987,6 +2115,7 @@ class SupabaseService {
           'student_name': student['name'] as String? ?? '',
           'student_email': student['email'] as String? ?? '',
           'student_id_number': student['student_id'] as String? ?? '',
+          'last_login_at': latestSessionSignals[studentId]?.toIso8601String(),
           'current_stage': currentStage,
           'last_activity': lastActivity,
           'stuck_duration': null,
@@ -2444,8 +2573,8 @@ class SupabaseService {
         if (latestSignals.containsKey(studentId)) {
           final signalTime = latestSignals[studentId]!;
           final difference = now.difference(signalTime);
-          // 10 秒更新一次心跳；允許一些網路/排程延遲
-          statusMap[studentId] = difference.inSeconds < 25;
+          // 心跳每 10 秒一次；放寬容忍避免「實際在線卻被誤判離線」
+          statusMap[studentId] = difference.inSeconds < 90;
         } else {
           statusMap[studentId] = false;
         }
@@ -2459,6 +2588,70 @@ class SupabaseService {
     }
     
     return statusMap;
+  }
+
+  Future<Map<String, bool>> getStudentsAiUsageStatus(List<String> studentIds) async {
+    final result = <String, bool>{};
+    for (final id in studentIds) {
+      result[id] = false;
+    }
+    if (studentIds.isEmpty) {
+      return result;
+    }
+    try {
+      final response = await _client
+          .from('chat_messages')
+          .select('student_id')
+          .inFilter('student_id', studentIds)
+          .limit(5000);
+      for (final row in (response as List).cast<Map<String, dynamic>>()) {
+        final studentId = row['student_id'] as String?;
+        if (studentId != null) {
+          result[studentId] = true;
+        }
+      }
+    } catch (e) {
+      print('Error getting students AI usage status: $e');
+    }
+    return result;
+  }
+
+  Future<Map<String, DateTime>> _getLatestSessionSignals(List<String> studentIds) async {
+    if (studentIds.isEmpty) {
+      return {};
+    }
+    try {
+      final response = await _client
+          .from('user_sessions')
+          .select('student_id, start_time, last_heartbeat, end_time')
+          .inFilter('student_id', studentIds);
+
+      final latestMap = <String, DateTime>{};
+      for (final row in (response as List).cast<Map<String, dynamic>>()) {
+        final studentId = row['student_id'] as String?;
+        if (studentId == null || studentId.isEmpty) continue;
+        final heartbeat = row['last_heartbeat'] as String?;
+        final start = row['start_time'] as String?;
+        final end = row['end_time'] as String?;
+
+        DateTime? candidate;
+        if (heartbeat != null && heartbeat.isNotEmpty) {
+          candidate = DateTime.tryParse(heartbeat);
+        }
+        candidate ??= DateTime.tryParse(end ?? '');
+        candidate ??= DateTime.tryParse(start ?? '');
+        if (candidate == null) continue;
+
+        final current = latestMap[studentId];
+        if (current == null || candidate.isAfter(current)) {
+          latestMap[studentId] = candidate;
+        }
+      }
+      return latestMap;
+    } catch (e) {
+      print('Error getting latest session signals: $e');
+      return {};
+    }
   }
 
   // Student Management - Reset student password (admin function)
@@ -2515,13 +2708,18 @@ class SupabaseService {
   }
 
   // Student Management - Get all students (simple list)
-  Future<List<Map<String, dynamic>>> getAllStudents() async {
+  Future<List<Map<String, dynamic>>> getAllStudents({String? classId}) async {
     try {
-      final response = await _client
+      var query = _client
           .from('users')
-          .select('id, name, email, student_id, created_at')
-          .eq('role', 'student')
-          .order('created_at', ascending: false);
+          .select('id, name, email, student_id, created_at, class_id')
+          .eq('role', 'student');
+
+      if (classId != null && classId.isNotEmpty) {
+        query = query.eq('class_id', classId);
+      }
+
+      final response = await query.order('created_at', ascending: false);
       
       return (response as List).map((student) => {
         'id': student['id'],
@@ -2529,6 +2727,7 @@ class SupabaseService {
         'email': student['email'],
         'student_id': student['student_id'],
         'created_at': student['created_at'],
+        'class_id': student['class_id'],
       }).toList();
     } catch (e) {
       print('Error getting all students: $e');
@@ -2806,8 +3005,127 @@ class SupabaseService {
     }
   }
 
+  // Teacher-Student Chat
+  Future<void> sendTeacherStudentMessage({
+    required String studentId,
+    required String senderId,
+    required String senderRole,
+    required String content,
+    bool isHandRaise = false,
+  }) async {
+    await _client.from('teacher_student_messages').insert({
+      'student_id': studentId,
+      'sender_id': senderId,
+      'sender_role': senderRole,
+      'content': content,
+      'is_hand_raise': isHandRaise,
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> getTeacherStudentMessages({
+    required String studentId,
+    int limit = 200,
+  }) async {
+    final query = _client
+        .from('teacher_student_messages')
+        .select()
+        .eq('student_id', studentId);
+
+    final response = await query
+        .order('created_at', ascending: true)
+        .limit(limit);
+    return (response as List).cast<Map<String, dynamic>>();
+  }
+
+  Future<List<Map<String, dynamic>>> getTeacherStudentConversationSummaries() async {
+    final students = await getAllStudents();
+    final studentNameMap = <String, String>{};
+    for (final s in students) {
+      final id = s['id'] as String?;
+      if (id == null) continue;
+      studentNameMap[id] = (s['name'] as String?) ?? '未命名學生';
+    }
+
+    final response = await _client
+        .from('teacher_student_messages')
+        .select('student_id, content, created_at, is_hand_raise, sender_role')
+        .order('created_at', ascending: false)
+        .limit(5000);
+
+    final latestByStudent = <String, Map<String, dynamic>>{};
+    for (final row in (response as List).cast<Map<String, dynamic>>()) {
+      final studentId = row['student_id'] as String?;
+      if (studentId == null || latestByStudent.containsKey(studentId)) continue;
+      latestByStudent[studentId] = {
+        'student_id': studentId,
+        'student_name': studentNameMap[studentId] ?? '未命名學生',
+        'latest_content': row['content'] as String? ?? '',
+        'latest_created_at': row['created_at'] as String?,
+        'is_hand_raise': row['is_hand_raise'] == true,
+        'latest_sender_role': row['sender_role'] as String? ?? '',
+      };
+    }
+
+    for (final s in students) {
+      final studentId = s['id'] as String?;
+      if (studentId == null || latestByStudent.containsKey(studentId)) continue;
+      latestByStudent[studentId] = {
+        'student_id': studentId,
+        'student_name': (s['name'] as String?) ?? '未命名學生',
+        'latest_content': '',
+        'latest_created_at': null,
+        'is_hand_raise': false,
+        'latest_sender_role': '',
+      };
+    }
+
+    final list = latestByStudent.values.toList();
+    list.sort((a, b) {
+      final aTime = DateTime.tryParse((a['latest_created_at'] ?? '').toString());
+      final bTime = DateTime.tryParse((b['latest_created_at'] ?? '').toString());
+      if (aTime == null && bTime == null) return 0;
+      if (aTime == null) return 1;
+      if (bTime == null) return -1;
+      return bTime.compareTo(aTime);
+    });
+    return list;
+  }
+
+  Future<Map<String, dynamic>?> getLatestIncomingTeacherStudentMessage({
+    required String currentUserId,
+    required bool isTeacher,
+  }) async {
+    try {
+      var query = _client
+          .from('teacher_student_messages')
+          .select('id, student_id, sender_id, sender_role, content, created_at');
+
+      if (isTeacher) {
+        query = query.eq('sender_role', 'student');
+      } else {
+        query = query.eq('sender_role', 'teacher').eq('student_id', currentUserId);
+      }
+
+      final row = await query
+          .order('created_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+      if (row == null) return null;
+      final senderId = row['sender_id']?.toString();
+      if (senderId == currentUserId) return null;
+      return row;
+    } catch (e) {
+      print('Error getting latest incoming teacher-student message: $e');
+      return null;
+    }
+  }
+
   // Student Attention Management - 標記學生為「已完成」（解除關注狀態）
-  Future<void> markStudentAttentionResolved(String studentId, {String? reason}) async {
+  Future<void> markStudentAttentionResolved(
+    String studentId, {
+    required String grammarTopicId,
+    String? reason,
+  }) async {
     try {
       final currentUser = _client.auth.currentUser;
       if (currentUser == null) {
@@ -2818,10 +3136,11 @@ class SupabaseService {
           .from('student_attention_resolved')
           .upsert({
             'student_id': studentId,
+            'grammar_topic_id': grammarTopicId,
             'marked_by': currentUser.id,
             'reason': reason,
             'marked_at': DateTime.now().toIso8601String(),
-          });
+          }, onConflict: 'student_id,grammar_topic_id');
     } catch (e) {
       print('Error marking student attention as resolved: $e');
       rethrow;
@@ -2829,12 +3148,16 @@ class SupabaseService {
   }
 
   // Student Attention Management - 取消標記（恢復關注狀態）
-  Future<void> unmarkStudentAttentionResolved(String studentId) async {
+  Future<void> unmarkStudentAttentionResolved(
+    String studentId, {
+    required String grammarTopicId,
+  }) async {
     try {
       await _client
           .from('student_attention_resolved')
           .delete()
-          .eq('student_id', studentId);
+          .eq('student_id', studentId)
+          .eq('grammar_topic_id', grammarTopicId);
     } catch (e) {
       print('Error unmarking student attention resolved: $e');
       rethrow;
@@ -2842,12 +3165,16 @@ class SupabaseService {
   }
 
   // Student Attention Management - 檢查學生是否已被標記為「已完成」
-  Future<bool> isStudentAttentionResolved(String studentId) async {
+  Future<bool> isStudentAttentionResolved(
+    String studentId, {
+    required String grammarTopicId,
+  }) async {
     try {
       final response = await _client
           .from('student_attention_resolved')
           .select('id')
           .eq('student_id', studentId)
+          .eq('grammar_topic_id', grammarTopicId)
           .limit(1);
       
       return (response as List).isNotEmpty;
@@ -2869,6 +3196,23 @@ class SupabaseService {
           .toSet();
     } catch (e) {
       print('Error getting resolved student IDs: $e');
+      return {};
+    }
+  }
+
+  // Student Attention Management - 獲取所有已標記為「已完成」的學生-課程鍵值
+  Future<Set<String>> getResolvedStudentTopicKeys() async {
+    try {
+      final response = await _client
+          .from('student_attention_resolved')
+          .select('student_id, grammar_topic_id');
+
+      return (response as List)
+          .map((record) =>
+              '${record['student_id'] as String}:${record['grammar_topic_id'] as String}')
+          .toSet();
+    } catch (e) {
+      print('Error getting resolved student-topic keys: $e');
       return {};
     }
   }

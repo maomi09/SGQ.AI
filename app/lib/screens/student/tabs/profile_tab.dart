@@ -1,9 +1,7 @@
-import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:intl/intl.dart';
-import 'package:cupertino_native_better/cupertino_native_better.dart';
 import '../../../providers/auth_provider.dart';
 import '../../../providers/grammar_topic_provider.dart';
 import '../../../providers/ai_chat_settings_provider.dart';
@@ -18,6 +16,7 @@ import '../../privacy_policy_screen.dart';
 import '../../report_bug_screen.dart';
 import '../../account_deletion_screen.dart';
 import '../../badges/badges_screen.dart';
+import '../../chat/teacher_student_chat_screen.dart';
 
 class ProfileTab extends StatefulWidget {
   const ProfileTab({super.key});
@@ -37,6 +36,33 @@ class _ProfileTabState extends State<ProfileTab> {
     super.initState();
     _loadUserAnimal();
     _loadAppVersion();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadAiSettingScope();
+    });
+  }
+
+  Future<void> _loadAiSettingScope() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final classProvider = Provider.of<ClassProvider>(context, listen: false);
+    final aiSettings = Provider.of<AiChatSettingsProvider>(context, listen: false);
+    final user = authProvider.currentUser;
+    if (user == null) return;
+
+    if (user.role == 'teacher') {
+      await classProvider.loadTeacherClasses(user.id);
+      if (classProvider.classes.isNotEmpty) {
+        final classId = classProvider.selectedClass?.id ?? classProvider.classes.first.id;
+        classProvider.selectClassById(classId);
+        await aiSettings.refreshForClass(classId);
+      }
+      return;
+    }
+
+    await classProvider.loadStudentClass(user.id);
+    await aiSettings.refreshForStudent(
+      studentId: user.id,
+      classId: classProvider.studentClass?.id ?? user.classId,
+    );
   }
 
   Future<void> _loadAppVersion() async {
@@ -151,6 +177,7 @@ class _ProfileTabState extends State<ProfileTab> {
   @override
   Widget build(BuildContext context) {
     final authProvider = Provider.of<AuthProvider>(context);
+    final classProvider = Provider.of<ClassProvider>(context);
     final user = authProvider.currentUser;
 
     if (user == null) {
@@ -159,8 +186,8 @@ class _ProfileTabState extends State<ProfileTab> {
       );
     }
 
-    final AiChatSettingsProvider? aiChatSettings =
-        user.role == 'student' ? Provider.of<AiChatSettingsProvider>(context) : null;
+    final AiChatSettingsProvider aiChatSettings =
+        Provider.of<AiChatSettingsProvider>(context);
 
     // 如果動物還沒載入，使用基於ID的默認動物
     final displayAnimal = _userAnimal ?? UserAnimalHelper.getDefaultAnimal(user.id);
@@ -333,73 +360,95 @@ class _ProfileTabState extends State<ProfileTab> {
                       ),
                     ),
                     const SizedBox(height: 24),
-                    // 操作按鈕
-                    Wrap(
-                      alignment: WrapAlignment.spaceAround,
-                      spacing: 16,
-                      runSpacing: 16,
+                    // 操作按鈕（單排置中，不使用左右滑動）
+                    Row(
                       children: [
-                        _buildActionButton(
-                          context,
-                          icon: Icons.edit,
-                          label: '編輯資料',
-                          color: Colors.blue,
-                          onTap: () => Navigator.push(
+                        Expanded(
+                          child: _buildActionButton(
                             context,
-                            MaterialPageRoute(
-                              builder: (context) => const EditProfileScreen(initialIndex: 0),
-                            ),
-                          ).then((_) {
-                            // 返回時刷新資料和動物
-                            authProvider.checkAuth();
-                            _loadUserAnimal();
-                          }),
-                        ),
-                        _buildActionButton(
-                          context,
-                          icon: Icons.email,
-                          label: '修改信箱',
-                          color: Colors.green,
-                          onTap: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => const EditProfileScreen(initialIndex: 1),
-                            ),
-                          ).then((_) {
-                            // 返回時刷新資料
-                            authProvider.checkAuth();
-                          }),
-                        ),
-                        _buildActionButton(
-                          context,
-                          icon: Icons.lock,
-                          label: '修改密碼',
-                          color: Colors.orange,
-                          onTap: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => const EditProfileScreen(initialIndex: 2),
-                            ),
-                          ),
-                        ),
-                        if (user.role == 'teacher')
-                          _buildActionButton(
-                            context,
-                            icon: Icons.people,
-                            label: '管理學生',
-                            color: Colors.purple,
+                            icon: Icons.edit,
+                            label: '編輯資料',
+                            color: Colors.blue,
                             onTap: () => Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (context) => const StudentManagementScreen(),
+                                builder: (context) => const EditProfileScreen(initialIndex: 0),
+                              ),
+                            ).then((_) {
+                              authProvider.checkAuth();
+                              _loadUserAnimal();
+                            }),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _buildActionButton(
+                            context,
+                            icon: Icons.email,
+                            label: '修改信箱',
+                            color: Colors.green,
+                            onTap: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => const EditProfileScreen(initialIndex: 1),
+                              ),
+                            ).then((_) {
+                              authProvider.checkAuth();
+                            }),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _buildActionButton(
+                            context,
+                            icon: Icons.lock,
+                            label: '修改密碼',
+                            color: Colors.orange,
+                            onTap: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => const EditProfileScreen(initialIndex: 2),
                               ),
                             ),
                           ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _buildActionButton(
+                            context,
+                            icon: Icons.forum_outlined,
+                            label: user.role == 'teacher' ? '師生聊天室' : '向老師提問',
+                            color: Colors.teal,
+                            onTap: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => const TeacherStudentChatScreen(),
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (user.role == 'teacher') ...[
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _buildActionButton(
+                              context,
+                              icon: Icons.people,
+                              label: '管理學生',
+                              color: Colors.purple,
+                              onTap: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => const StudentManagementScreen(),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                     const SizedBox(height: 32),
-                    // AI 聊天室開關卡片（僅學生顯示）
-                    if (user.role == 'student' && aiChatSettings != null) ...[
+                    // AI 小幫手狀態卡片（學生唯讀）
+                    if (user.role == 'student') ...[
                       Container(
                         padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(
@@ -430,8 +479,8 @@ class _ProfileTabState extends State<ProfileTab> {
                                   const SizedBox(height: 4),
                                   Text(
                                     aiChatSettings.isEnabled
-                                        ? '已開啟，出題區會顯示 AI 聊天室按鈕'
-                                        : '已關閉，出題區隱藏 AI 聊天室按鈕',
+                                        ? '老師已開啟，出題區會顯示 AI 聊天室按鈕'
+                                        : '老師已關閉，出題區不顯示 AI 聊天室按鈕',
                                     style: TextStyle(
                                       fontSize: 13,
                                       color: Colors.grey[600],
@@ -441,7 +490,92 @@ class _ProfileTabState extends State<ProfileTab> {
                               ),
                             ),
                             const SizedBox(width: 12),
-                            _buildAiChatToggleButton(aiChatSettings),
+                            _buildAiChatReadonlyBadge(aiChatSettings),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 32),
+                    ],
+                    // AI 小幫手控制卡片（老師可設定）
+                    if (user.role == 'teacher') ...[
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.05),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'AI 小幫手控制',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF1F2937),
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            if (classProvider.classes.isEmpty)
+                              const Text(
+                                '尚無班級可設定',
+                                style: TextStyle(fontSize: 13, color: Colors.grey),
+                              )
+                            else ...[
+                              DropdownButtonFormField<String>(
+                                value: aiChatSettings.boundClassId ??
+                                    classProvider.selectedClass?.id ??
+                                    classProvider.classes.first.id,
+                                decoration: const InputDecoration(
+                                  labelText: '設定班級',
+                                  border: OutlineInputBorder(),
+                                ),
+                                items: classProvider.classes
+                                    .map(
+                                      (c) => DropdownMenuItem<String>(
+                                        value: c.id,
+                                        child: Text(c.name),
+                                      ),
+                                    )
+                                    .toList(),
+                                onChanged: (value) async {
+                                  if (value == null) return;
+                                  classProvider.selectClassById(value);
+                                  await aiChatSettings.refreshForClass(value);
+                                },
+                              ),
+                              const SizedBox(height: 12),
+                              SwitchListTile(
+                                contentPadding: EdgeInsets.zero,
+                                title: const Text('允許學生開啟 AI 小幫手'),
+                                value: aiChatSettings.isEnabled,
+                                onChanged: aiChatSettings.isUpdating
+                                    ? null
+                                    : (value) async {
+                                        final classId = aiChatSettings.boundClassId ??
+                                            classProvider.selectedClass?.id ??
+                                            classProvider.classes.first.id;
+                                        final ok = await aiChatSettings.setEnabledForClass(
+                                          classId: classId,
+                                          enabled: value,
+                                        );
+                                        if (!context.mounted) return;
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          SnackBar(
+                                            content: Text(ok ? 'AI 小幫手設定已更新' : 'AI 小幫手設定更新失敗'),
+                                            backgroundColor: ok ? Colors.green : Colors.red,
+                                          ),
+                                        );
+                                      },
+                              ),
+                            ],
                           ],
                         ),
                       ),
@@ -851,8 +985,8 @@ class _ProfileTabState extends State<ProfileTab> {
       child: Column(
         children: [
           Container(
-            width: 60,
-            height: 60,
+            width: 52,
+            height: 52,
             decoration: BoxDecoration(
               color: color.withOpacity(0.1),
               shape: BoxShape.circle,
@@ -860,14 +994,17 @@ class _ProfileTabState extends State<ProfileTab> {
             child: Icon(
               icon,
               color: color,
-              size: 28,
+              size: 24,
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           Text(
             label,
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              fontSize: 12,
+              fontSize: 11,
               color: Colors.grey[700],
               fontWeight: FontWeight.w500,
             ),
@@ -946,20 +1083,10 @@ class _ProfileTabState extends State<ProfileTab> {
     );
   }
 
-  Widget _buildAiChatToggleButton(AiChatSettingsProvider settings) {
+  Widget _buildAiChatReadonlyBadge(AiChatSettingsProvider settings) {
     final label = settings.isEnabled ? '開啟中' : '已關閉';
-    if (Platform.isIOS && PlatformVersion.shouldUseNativeGlass) {
-      return CNButton.icon(
-        icon: CNSymbol(
-          settings.isEnabled ? 'bubble.left.and.bubble.right.fill' : 'bubble.left.and.bubble.right',
-          size: 16,
-        ),
-        config: const CNButtonConfig(style: CNButtonStyle.glass),
-        onPressed: settings.toggle,
-      );
-    }
     return ElevatedButton(
-      onPressed: settings.toggle,
+      onPressed: null,
       style: ElevatedButton.styleFrom(
         backgroundColor: settings.isEnabled ? Colors.green.shade600 : Colors.grey.shade400,
         foregroundColor: Colors.white,

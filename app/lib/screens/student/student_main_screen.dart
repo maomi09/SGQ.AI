@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cupertino_native_better/cupertino_native_better.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:async';
 import '../../providers/grammar_topic_provider.dart';
 import '../../providers/class_provider.dart';
 import '../../providers/auth_provider.dart';
+import '../../providers/ai_chat_settings_provider.dart';
+import '../../services/supabase_service.dart';
 import 'tabs/grammar_key_points_tab.dart';
 import 'tabs/reminders_tab.dart';
 import 'tabs/question_generation_tab.dart';
@@ -20,23 +24,39 @@ class StudentMainScreen extends StatefulWidget {
 class _StudentMainScreenState extends State<StudentMainScreen> {
   int _currentIndex = 0;
   bool _isCheckingClass = true;
+  final SupabaseClient _client = Supabase.instance.client;
+  final SupabaseService _supabaseService = SupabaseService();
+  RealtimeChannel? _messageNotifyChannel;
+  String? _boundNotifyUserId;
+  Timer? _notifyPollingTimer;
+  String? _lastNotifiedMessageId;
+  bool _notifyWarmupDone = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _checkClassAndLoadTopics();
+      _bindMessageNotificationsIfNeeded();
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _bindMessageNotificationsIfNeeded();
   }
 
   Future<void> _checkClassAndLoadTopics() async {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final classProvider = Provider.of<ClassProvider>(context, listen: false);
     final grammarTopicProvider = Provider.of<GrammarTopicProvider>(context, listen: false);
+    final aiSettingsProvider = Provider.of<AiChatSettingsProvider>(context, listen: false);
 
     if (authProvider.currentUser != null) {
+      final currentUser = authProvider.currentUser!;
       // 載入學生所屬的班級
-      await classProvider.loadStudentClass(authProvider.currentUser!.id);
+      await classProvider.loadStudentClass(currentUser.id);
       
       // 根據班級載入課程
       if (classProvider.studentClass != null) {
@@ -44,6 +64,12 @@ class _StudentMainScreenState extends State<StudentMainScreen> {
       } else {
         await grammarTopicProvider.loadTopics();
       }
+
+      // 初始化班級 AI 小幫手設定並啟用即時監聽
+      await aiSettingsProvider.refreshForStudent(
+        studentId: currentUser.id,
+        classId: classProvider.studentClass?.id ?? currentUser.classId,
+      );
       
       // 初始化 Realtime 訂閱以接收即時通知
       await grammarTopicProvider.initializeRealtimeSubscription();
@@ -60,7 +86,99 @@ class _StudentMainScreenState extends State<StudentMainScreen> {
   void dispose() {
     // 取消 Realtime 訂閱
     Provider.of<GrammarTopicProvider>(context, listen: false).disposeRealtimeSubscription();
+    Provider.of<AiChatSettingsProvider>(context, listen: false).disposeRealtimeSubscription();
+    final channel = _messageNotifyChannel;
+    _messageNotifyChannel = null;
+    if (channel != null) {
+      _client.removeChannel(channel);
+    }
+    _notifyPollingTimer?.cancel();
+    _notifyPollingTimer = null;
     super.dispose();
+  }
+
+  void _bindMessageNotificationsIfNeeded() {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final currentUserId = authProvider.currentUser?.id;
+    if (currentUserId == null) return;
+    if (_boundNotifyUserId == currentUserId && _messageNotifyChannel != null) return;
+
+    final oldChannel = _messageNotifyChannel;
+    _messageNotifyChannel = null;
+    if (oldChannel != null) {
+      _client.removeChannel(oldChannel);
+    }
+
+    final channelName = 'student-in-app-notify-$currentUserId-${DateTime.now().millisecondsSinceEpoch}';
+    final channel = _client.channel(channelName);
+    _messageNotifyChannel = channel;
+    _boundNotifyUserId = currentUserId;
+
+    channel
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'teacher_student_messages',
+          callback: (payload) {
+            if (!mounted) return;
+            final senderId = payload.newRecord['sender_id']?.toString();
+            final senderRole = payload.newRecord['sender_role']?.toString() ?? '';
+            final studentId = payload.newRecord['student_id']?.toString();
+            final content = (payload.newRecord['content']?.toString() ?? '').trim();
+            if (studentId != currentUserId) return;
+            if (senderId == currentUserId || senderRole != 'teacher') return;
+            final preview = content.isEmpty
+                ? '收到一則新訊息'
+                : (content.length > 30 ? '${content.substring(0, 30)}...' : content);
+            ScaffoldMessenger.of(context)
+              ..clearSnackBars()
+              ..showSnackBar(
+                SnackBar(
+                  content: Text('老師回覆：$preview'),
+                  behavior: SnackBarBehavior.floating,
+                  duration: const Duration(seconds: 2),
+                ),
+              );
+          },
+        )
+        .subscribe();
+    _startNotifyPolling(currentUserId);
+  }
+
+  void _startNotifyPolling(String currentUserId) {
+    _notifyPollingTimer?.cancel();
+    _notifyPollingTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
+      if (!mounted) return;
+      final latest = await _supabaseService.getLatestIncomingTeacherStudentMessage(
+        currentUserId: currentUserId,
+        isTeacher: false,
+      );
+      if (latest == null) return;
+      final messageId = latest['id']?.toString();
+      if (messageId == null || messageId.isEmpty) return;
+
+      if (!_notifyWarmupDone) {
+        _lastNotifiedMessageId = messageId;
+        _notifyWarmupDone = true;
+        return;
+      }
+      if (_lastNotifiedMessageId == messageId) return;
+      _lastNotifiedMessageId = messageId;
+
+      final content = (latest['content']?.toString() ?? '').trim();
+      final preview = content.isEmpty
+          ? '收到一則新訊息'
+          : (content.length > 30 ? '${content.substring(0, 30)}...' : content);
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('老師回覆：$preview'),
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+    });
   }
 
   void _navigateToJoinClass() async {
@@ -111,6 +229,9 @@ class _StudentMainScreenState extends State<StudentMainScreen> {
   @override
   Widget build(BuildContext context) {
     final classProvider = Provider.of<ClassProvider>(context);
+    final isAndroid = Theme.of(context).platform == TargetPlatform.android;
+    final shouldInsetBottomTabBar = isAndroid ? true : !PlatformVersion.shouldUseNativeGlass;
+    final bottomBarExtraPadding = isAndroid ? 6.0 : 0.0;
     
     // 如果正在檢查班級狀態，顯示載入指示器
     if (_isCheckingClass) {
@@ -229,17 +350,14 @@ class _StudentMainScreenState extends State<StudentMainScreen> {
     }
 
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       extendBody: true,
       body: MediaQuery.removePadding(
         context: context,
-        removeBottom: true,
+        removeBottom: !shouldInsetBottomTabBar,
         child: Stack(
           fit: StackFit.expand,
           children: [
-          const Positioned.fill(
-            child: ColoredBox(color: Colors.white),
-          ),
           Positioned.fill(
             child: IndexedStack(
               index: _currentIndex,
@@ -257,37 +375,40 @@ class _StudentMainScreenState extends State<StudentMainScreen> {
             bottom: 0,
             child: SafeArea(
               top: false,
-              bottom: false,
-              child: CNTabBar(
-                backgroundColor: Colors.transparent,
-                items: const [
-                  CNTabBarItem(
-                    label: '文法重點',
-                    icon: CNSymbol('flag'),
-                    activeIcon: CNSymbol('flag.fill'),
-                  ),
-                  CNTabBarItem(
-                    label: '出題重點提醒',
-                    icon: CNSymbol('list.bullet'),
-                    activeIcon: CNSymbol('list.bullet'),
-                  ),
-                  CNTabBarItem(
-                    label: '出題區',
-                    icon: CNSymbol('checkmark.circle'),
-                    activeIcon: CNSymbol('checkmark.circle.fill'),
-                  ),
-                  CNTabBarItem(
-                    label: '個人',
-                    icon: CNSymbol('person'),
-                    activeIcon: CNSymbol('person.fill'),
-                  ),
-                ],
-                currentIndex: _currentIndex,
-                onTap: (index) {
-                  if (_currentIndex != index) {
-                    setState(() => _currentIndex = index);
-                  }
-                },
+              bottom: shouldInsetBottomTabBar,
+              child: Padding(
+                padding: EdgeInsets.only(bottom: bottomBarExtraPadding),
+                child: CNTabBar(
+                  backgroundColor: Colors.transparent,
+                  items: const [
+                    CNTabBarItem(
+                      label: '文法重點',
+                      icon: CNSymbol('flag'),
+                      activeIcon: CNSymbol('flag.fill'),
+                    ),
+                    CNTabBarItem(
+                      label: '出題重點提醒',
+                      icon: CNSymbol('list.bullet'),
+                      activeIcon: CNSymbol('list.bullet'),
+                    ),
+                    CNTabBarItem(
+                      label: '出題區',
+                      icon: CNSymbol('checkmark.circle'),
+                      activeIcon: CNSymbol('checkmark.circle.fill'),
+                    ),
+                    CNTabBarItem(
+                      label: '個人',
+                      icon: CNSymbol('person'),
+                      activeIcon: CNSymbol('person.fill'),
+                    ),
+                  ],
+                  currentIndex: _currentIndex,
+                  onTap: (index) {
+                    if (_currentIndex != index) {
+                      setState(() => _currentIndex = index);
+                    }
+                  },
+                ),
               ),
             ),
           ),
