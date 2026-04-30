@@ -27,6 +27,7 @@ class _TeacherMainScreenState extends State<TeacherMainScreen> {
   String? _lastNotifiedMessageId;
   bool _notifyWarmupDone = false;
   final Map<String, String> _studentNameCache = {};
+  bool _isNotifyDialogShowing = false;
 
   @override
   void initState() {
@@ -85,15 +86,10 @@ class _TeacherMainScreenState extends State<TeacherMainScreen> {
             final preview = content.isEmpty
                 ? '收到一則新訊息'
                 : (content.length > 30 ? '${content.substring(0, 30)}...' : content);
-            ScaffoldMessenger.of(context)
-              ..clearSnackBars()
-              ..showSnackBar(
-                SnackBar(
-                  content: Text('學生 $studentName：$preview'),
-                  behavior: SnackBarBehavior.floating,
-                  duration: const Duration(seconds: 2),
-                ),
-              );
+            _showMessageNotifyDialog(
+              title: '學生新訊息',
+              message: '學生 $studentName：$preview',
+            );
           },
         )
         .subscribe();
@@ -126,15 +122,10 @@ class _TeacherMainScreenState extends State<TeacherMainScreen> {
       final preview = content.isEmpty
           ? '收到一則新訊息'
           : (content.length > 30 ? '${content.substring(0, 30)}...' : content);
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(
-          SnackBar(
-            content: Text('學生 $studentName：$preview'),
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 2),
-          ),
-        );
+      _showMessageNotifyDialog(
+        title: '學生新訊息',
+        message: '學生 $studentName：$preview',
+      );
     });
   }
 
@@ -156,6 +147,28 @@ class _TeacherMainScreenState extends State<TeacherMainScreen> {
     } catch (_) {
       return '未知學生';
     }
+  }
+
+  Future<void> _showMessageNotifyDialog({
+    required String title,
+    required String message,
+  }) async {
+    if (!mounted || _isNotifyDialogShowing) return;
+    _isNotifyDialogShowing = true;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
+    _isNotifyDialogShowing = false;
   }
 
   @override

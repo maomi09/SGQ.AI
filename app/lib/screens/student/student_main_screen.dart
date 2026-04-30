@@ -31,6 +31,7 @@ class _StudentMainScreenState extends State<StudentMainScreen> {
   Timer? _notifyPollingTimer;
   String? _lastNotifiedMessageId;
   bool _notifyWarmupDone = false;
+  bool _isNotifyDialogShowing = false;
 
   @override
   void initState() {
@@ -130,15 +131,10 @@ class _StudentMainScreenState extends State<StudentMainScreen> {
             final preview = content.isEmpty
                 ? '收到一則新訊息'
                 : (content.length > 30 ? '${content.substring(0, 30)}...' : content);
-            ScaffoldMessenger.of(context)
-              ..clearSnackBars()
-              ..showSnackBar(
-                SnackBar(
-                  content: Text('老師回覆：$preview'),
-                  behavior: SnackBarBehavior.floating,
-                  duration: const Duration(seconds: 2),
-                ),
-              );
+            _showMessageNotifyDialog(
+              title: '老師回覆了您',
+              message: '老師回覆：$preview',
+            );
           },
         )
         .subscribe();
@@ -169,16 +165,33 @@ class _StudentMainScreenState extends State<StudentMainScreen> {
       final preview = content.isEmpty
           ? '收到一則新訊息'
           : (content.length > 30 ? '${content.substring(0, 30)}...' : content);
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(
-          SnackBar(
-            content: Text('老師回覆：$preview'),
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 2),
-          ),
-        );
+      _showMessageNotifyDialog(
+        title: '老師回覆了您',
+        message: '老師回覆：$preview',
+      );
     });
+  }
+
+  Future<void> _showMessageNotifyDialog({
+    required String title,
+    required String message,
+  }) async {
+    if (!mounted || _isNotifyDialogShowing) return;
+    _isNotifyDialogShowing = true;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
+    _isNotifyDialogShowing = false;
   }
 
   void _navigateToJoinClass() async {

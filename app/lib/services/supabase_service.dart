@@ -2425,10 +2425,15 @@ class SupabaseService {
     required DateTime heartbeatTime,
   }) async {
     try {
-      await _client
+      final response = await _client
           .from('user_sessions')
           .update({'last_heartbeat': heartbeatTime.toIso8601String()})
-          .eq('id', sessionId);
+          .eq('id', sessionId)
+          .isFilter('end_time', null)
+          .select('id');
+      if ((response as List).isEmpty) {
+        return false;
+      }
       return true;
     } catch (e) {
       // 心跳更新失敗不應影響主要流程，但要把錯誤留給呼叫端做診斷
@@ -2445,7 +2450,8 @@ class SupabaseService {
           .update({
             'end_time': (endTime ?? DateTime.now()).toIso8601String(),
           })
-          .eq('id', sessionId);
+          .eq('id', sessionId)
+          .isFilter('end_time', null);
     } catch (e) {
       print('Error ending session: $e');
     }
@@ -2512,7 +2518,7 @@ class SupabaseService {
     try {
       final response = await _client
           .from('user_sessions')
-          .select('id, start_time')
+          .select('id, start_time, last_heartbeat')
           .eq('student_id', studentId)
           .isFilter('end_time', null)
           .order('start_time', ascending: false)
@@ -2520,14 +2526,16 @@ class SupabaseService {
           .maybeSingle();
       
       if (response != null) {
-        // 檢查 session 是否在最近 5 分鐘內有活動（避免顯示長時間未活動的 session）
+        final String? heartbeatStr = response['last_heartbeat'] as String?;
         final startTime = DateTime.parse(response['start_time'] as String);
+        final signalTime = heartbeatStr != null
+            ? DateTime.parse(heartbeatStr)
+            : startTime;
         final now = DateTime.now();
-        final difference = now.difference(startTime);
+        final difference = now.difference(signalTime);
         
-        // 如果 session 在最近 30 分鐘內開始，認為學生在線
-        // 這個時間可以根據需要調整
-        return difference.inMinutes < 30;
+        // 心跳每 10 秒一次；容忍 30 秒，避免關閉 App 後長時間誤判上線中
+        return difference.inSeconds < 30;
       }
       return false;
     } catch (e) {
@@ -2573,8 +2581,8 @@ class SupabaseService {
         if (latestSignals.containsKey(studentId)) {
           final signalTime = latestSignals[studentId]!;
           final difference = now.difference(signalTime);
-          // 心跳每 10 秒一次；放寬容忍避免「實際在線卻被誤判離線」
-          statusMap[studentId] = difference.inSeconds < 90;
+          // 心跳每 10 秒一次；容忍 30 秒，讓關閉 App 後更快顯示離線
+          statusMap[studentId] = difference.inSeconds < 30;
         } else {
           statusMap[studentId] = false;
         }
@@ -3040,10 +3048,40 @@ class SupabaseService {
   Future<List<Map<String, dynamic>>> getTeacherStudentConversationSummaries() async {
     final students = await getAllStudents();
     final studentNameMap = <String, String>{};
+    final studentClassMap = <String, String>{};
+    final classIds = <String>{};
     for (final s in students) {
       final id = s['id'] as String?;
       if (id == null) continue;
       studentNameMap[id] = (s['name'] as String?) ?? '未命名學生';
+      final classId = s['class_id'] as String?;
+      if (classId != null && classId.isNotEmpty) {
+        classIds.add(classId);
+      }
+    }
+
+    final classNameMap = <String, String>{};
+    if (classIds.isNotEmpty) {
+      try {
+        final classRows = await _client
+            .from('classes')
+            .select('id, name')
+            .inFilter('id', classIds.toList());
+        for (final row in (classRows as List).cast<Map<String, dynamic>>()) {
+          final classId = row['id']?.toString();
+          final className = row['name']?.toString();
+          if (classId != null && className != null && className.isNotEmpty) {
+            classNameMap[classId] = className;
+          }
+        }
+      } catch (_) {}
+    }
+
+    for (final s in students) {
+      final id = s['id'] as String?;
+      if (id == null) continue;
+      final classId = s['class_id'] as String?;
+      studentClassMap[id] = classNameMap[classId] ?? '未加入班級';
     }
 
     final response = await _client
@@ -3059,6 +3097,7 @@ class SupabaseService {
       latestByStudent[studentId] = {
         'student_id': studentId,
         'student_name': studentNameMap[studentId] ?? '未命名學生',
+        'class_name': studentClassMap[studentId] ?? '未加入班級',
         'latest_content': row['content'] as String? ?? '',
         'latest_created_at': row['created_at'] as String?,
         'is_hand_raise': row['is_hand_raise'] == true,
@@ -3072,6 +3111,7 @@ class SupabaseService {
       latestByStudent[studentId] = {
         'student_id': studentId,
         'student_name': (s['name'] as String?) ?? '未命名學生',
+        'class_name': studentClassMap[studentId] ?? '未加入班級',
         'latest_content': '',
         'latest_created_at': null,
         'is_hand_raise': false,

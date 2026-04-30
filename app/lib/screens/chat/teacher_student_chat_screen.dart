@@ -520,6 +520,17 @@ class _TeacherStudentChatScreenState extends State<TeacherStudentChatScreen> {
     final user = authProvider.currentUser;
     final isTeacher = user?.role == 'teacher';
     final inConversation = !isTeacher || _selectedStudentId != null;
+    Map<String, dynamic>? selectedSummary;
+    if (isTeacher && _selectedStudentId != null) {
+      for (final item in _conversationSummaries) {
+        if (item['student_id'] == _selectedStudentId) {
+          selectedSummary = item;
+          break;
+        }
+      }
+    }
+    final selectedStudentName = selectedSummary?['student_name']?.toString() ?? '';
+    final selectedClassName = selectedSummary?['class_name']?.toString() ?? '';
 
     return Scaffold(
       appBar: AppBar(
@@ -531,7 +542,11 @@ class _TeacherStudentChatScreenState extends State<TeacherStudentChatScreen> {
             : null,
         title: Text(
           isTeacher
-              ? (inConversation ? '聊天室' : '學生聊天室列表')
+              ? (inConversation
+                  ? (selectedStudentName.isEmpty
+                      ? '聊天室'
+                      : '聊天室 - $selectedStudentName${selectedClassName.isNotEmpty ? '（$selectedClassName）' : ''}')
+                  : '學生聊天室列表')
               : '向老師提問',
         ),
       ),
@@ -737,11 +752,12 @@ class _TeacherStudentChatScreenState extends State<TeacherStudentChatScreen> {
 
         final item = _filteredSummaries[index - (activeHandRaises.isNotEmpty ? 1 : 0)];
         final name = item['student_name'] as String? ?? '未命名學生';
+        final className = item['class_name'] as String? ?? '未加入班級';
         final preview = item['latest_content'] as String? ?? '';
         final createdAt = DateTime.tryParse((item['latest_created_at'] ?? '').toString());
         final hasHandRaise = item['is_hand_raise'] == true;
         final hasUnread = _hasUnreadForTeacher(item);
-        final subtitle = preview.isEmpty ? '尚無訊息' : preview;
+        final subtitle = preview.isEmpty ? '班級：$className' : '班級：$className  ｜  $preview';
         final timeText = createdAt == null ? '' : _formatTaipeiTime(item['latest_created_at']?.toString());
 
         return Card(

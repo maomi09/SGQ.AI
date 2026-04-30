@@ -22,6 +22,7 @@ class DashboardTab extends StatefulWidget {
 
 class _DashboardTabState extends State<DashboardTab> {
   final SupabaseService _supabaseService = SupabaseService();
+  Timer? _onlineStatusTimer;
   List<Map<String, dynamic>> _studentsProgress = [];
   bool _isLoading = true;
   Set<String> _resolvedStudentTopicKeys = {}; // 已標記為「已完成」的學生-課程鍵值
@@ -54,14 +55,38 @@ class _DashboardTabState extends State<DashboardTab> {
       Provider.of<GrammarTopicProvider>(context, listen: false).loadTopics();
     });
     _loadStudentsProgress();
+    _startOnlineStatusPolling();
   }
 
   @override
   void dispose() {
+    _onlineStatusTimer?.cancel();
+    _onlineStatusTimer = null;
     if (_listenerAttached) {
       _autoRefreshProvider.removeListener(_handleAutoRefreshTokenChanged);
     }
     super.dispose();
+  }
+
+  void _startOnlineStatusPolling() {
+    _onlineStatusTimer?.cancel();
+    _onlineStatusTimer = Timer.periodic(const Duration(seconds: 10), (_) async {
+      if (!mounted || _studentsProgress.isEmpty) return;
+      final studentIds = _studentsProgress
+          .map((s) => s['student_id'] as String?)
+          .whereType<String>()
+          .toList();
+      if (studentIds.isEmpty) return;
+      try {
+        final onlineMap = await _supabaseService.getStudentsOnlineStatus(studentIds);
+        if (!mounted) return;
+        setState(() {
+          _studentsOnlineStatus = onlineMap;
+        });
+      } catch (_) {
+        // 在線狀態輪詢失敗時忽略，避免影響主要頁面
+      }
+    });
   }
 
   void _handleAutoRefreshTokenChanged() {

@@ -103,8 +103,8 @@ class _LifecycleWatcherState extends State<_LifecycleWatcher> {
         authProvider.handleAppResumed();
       },
       onInactive: () {
-        final authProvider = Provider.of<AuthProvider>(context, listen: false);
-        authProvider.handleAppPaused();
+        // inactive 可能只是暫時狀態（如系統彈窗/切換動畫），
+        // 不應立即結束 session，避免老師端誤判「離線」。
       },
       onPause: () {
         final authProvider = Provider.of<AuthProvider>(context, listen: false);

@@ -65,6 +65,18 @@ class _StudentQuestionsScreenState extends State<StudentQuestionsScreen> with Si
       // 載入該學生的所有題目
       _allQuestions = await _supabaseService.getQuestions(widget.studentId);
 
+      // 補齊課程映射：若 provider 內沒有該課程，直接按題目中的課程 ID 回查
+      final missingTopicIds = _allQuestions
+          .map((q) => q.grammarTopicId)
+          .where((id) => !_topicMap.containsKey(id))
+          .toSet();
+      for (final topicId in missingTopicIds) {
+        final topic = await _supabaseService.getGrammarTopic(topicId);
+        if (topic != null) {
+          _topicMap[topic.id] = topic;
+        }
+      }
+
       // 按課程分組
       _questionsByTopic = {};
       for (var question in _allQuestions) {
