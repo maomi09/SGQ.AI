@@ -2,7 +2,8 @@
 window.SGQ_APP_LANDING = {
   appName: 'SGQ 學習系統',
   tagline: '支援大學 EFL 學生進行學生生成文法問題（SGQ）的學習 App',
-  versionLabel: '1.0.3',
+  androidVersion: '1.0.3',
+  iosVersion: '1.0.4',
 
   // Google Play (package: com.sgqai.app)
   playStoreUrl: 'https://play.google.com/store/apps/details?id=com.sgqai.app&pcampaignid=web_share',
@@ -16,7 +17,7 @@ window.SGQ_APP_LANDING = {
   teacherExportUrl: 'https://export.sagp-qp.com',
 
   // Public privacy policy page URL (leave empty to hide link)
-  privacyPolicyUrl: '',
+  privacyPolicyUrl: 'https://app.sagp-qp.com/privacy.html',
 
   supportEmail: 'sgqaiapp@gmail.com',
 

@@ -21,12 +21,23 @@
   setText('hero-tagline', tagline);
   setText('footer-app-name', appName);
 
-  if (cfg.versionLabel) {
-    setText('version-label', '目前版本 ' + cfg.versionLabel);
-  } else {
+  (function setVersionLabel() {
     const v = document.getElementById('version-label');
-    if (v) v.classList.add('hidden');
-  }
+    if (!v) return;
+    const android = (cfg.androidVersion || '').trim();
+    const ios = (cfg.iosVersion || '').trim();
+    const legacy = (cfg.versionLabel || '').trim();
+    const parts = [];
+    if (android) parts.push('Android ' + android);
+    if (ios) parts.push('iOS ' + ios);
+    if (parts.length) {
+      v.textContent = '目前版本 ' + parts.join(' · ');
+    } else if (legacy) {
+      v.textContent = '目前版本 ' + legacy;
+    } else {
+      v.classList.add('hidden');
+    }
+  })();
 
   const googleBadge =
     (cfg.googlePlayBadge || 'assets/google-play-badge.png').trim();
@@ -95,8 +106,14 @@
   if (privacyLink && privacyCard) {
     if (privacyUrl) {
       privacyLink.href = privacyUrl;
-      privacyLink.target = '_blank';
-      privacyLink.rel = 'noopener noreferrer';
+      const onAppSite =
+        privacyUrl.indexOf('app.sagp-qp.com') !== -1 ||
+        privacyUrl.startsWith('/') ||
+        !/^https?:\/\//i.test(privacyUrl);
+      if (!onAppSite) {
+        privacyLink.target = '_blank';
+        privacyLink.rel = 'noopener noreferrer';
+      }
     } else {
       privacyCard.classList.add('hidden');
     }
