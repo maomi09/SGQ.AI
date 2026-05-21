@@ -29,10 +29,11 @@ class _ClassesTabState extends State<ClassesTab> {
   @override
   Widget build(BuildContext context) {
     final classProvider = Provider.of<ClassProvider>(context);
-    final authProvider = Provider.of<AuthProvider>(context);
-    final user = authProvider.currentUser;
+
+    final classes = classProvider.classes;
 
     return SafeArea(
+      bottom: false,
       child: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
@@ -47,55 +48,21 @@ class _ClassesTabState extends State<ClassesTab> {
         ),
         child: Column(
           children: [
-            // 頂部區域
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Row(
-                      children: [
-                        CircleAvatar(
-                          radius: 28,
-                          backgroundColor: Colors.indigo.shade400,
-                          child: Text(
-                            user?.name.isNotEmpty == true ? user!.name[0].toUpperCase() : 'T',
-                            style: const TextStyle(
-                              fontSize: 24,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        const Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                '班級管理',
-                                style: TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF1F2937),
-                                ),
-                              ),
-                              Text(
-                                '管理班級與學生',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  '班級管理',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: const Color(0xFF1F2937),
                   ),
-                ],
+                ),
               ),
             ),
+            const SizedBox(height: 16),
             // 新增班級按鈕
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -120,6 +87,8 @@ class _ClassesTabState extends State<ClassesTab> {
                     const SizedBox(width: 8),
                     TextButton(
                       onPressed: () {
+                        final authProvider =
+                            Provider.of<AuthProvider>(context, listen: false);
                         _showAddClassDialog(context, classProvider, authProvider);
                       },
                       child: const Text(
@@ -140,7 +109,7 @@ class _ClassesTabState extends State<ClassesTab> {
             Expanded(
               child: classProvider.isLoading
                   ? const Center(child: CircularProgressIndicator())
-                  : classProvider.classes.isEmpty
+                  : classes.isEmpty
                       ? Center(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
@@ -175,9 +144,9 @@ class _ClassesTabState extends State<ClassesTab> {
                             right: 20,
                             bottom: MediaQuery.of(context).padding.bottom + 100,
                           ),
-                          itemCount: classProvider.classes.length,
+                          itemCount: classes.length,
                           itemBuilder: (context, index) {
-                            final classModel = classProvider.classes[index];
+                            final classModel = classes[index];
                             return _ClassCard(
                               classModel: classModel,
                               classProvider: classProvider,
@@ -372,16 +341,31 @@ class _ClassCardState extends State<_ClassCard> {
     }
   }
 
+  ClassModel _resolveClassModel() {
+    return widget.classProvider.classes.firstWhere(
+      (c) => c.id == widget.classModel.id,
+      orElse: () => widget.classModel,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final classModel = _resolveClassModel();
+
     return InkWell(
-      onTap: () {
-        Navigator.push(
+      onTap: () async {
+        await Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (context) => ClassDetailScreen(classModel: widget.classModel),
+            builder: (context) => ClassDetailScreen(classModel: classModel),
           ),
         );
+        if (!mounted) return;
+        final teacherId =
+            Provider.of<AuthProvider>(context, listen: false).currentUser?.id;
+        if (teacherId != null) {
+          await widget.classProvider.loadTeacherClasses(teacherId);
+        }
       },
       borderRadius: BorderRadius.circular(16),
       child: Container(
@@ -419,7 +403,7 @@ class _ClassCardState extends State<_ClassCard> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    widget.classModel.name,
+                    classModel.name,
                     style: const TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
@@ -436,7 +420,7 @@ class _ClassCardState extends State<_ClassCard> {
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: Text(
-                          '代碼：${widget.classModel.code}',
+                          '代碼：${classModel.code}',
                           style: TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.w500,

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'supabase_service.dart';
+import 'student_activity_tracker.dart';
 
 /// 統一管理學生學習時數的本地心跳與結算（單例）。
 ///
@@ -135,6 +136,11 @@ class StudyTimerManager {
 
     try {
       await _supabaseService.endSession(sessionId, endTime: last);
+      final minutes = duration.inMinutes;
+      if (minutes > 0) {
+        await StudentActivityTracker.instance
+            .trackSessionMinutesForActiveTopic(minutes);
+      }
     } catch (_) {
       // 後端同步失敗：保留本地快取，讓下次登入/啟動再補償
       rethrow;

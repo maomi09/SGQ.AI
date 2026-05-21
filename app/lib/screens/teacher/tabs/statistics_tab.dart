@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -6,11 +5,13 @@ import '../../../providers/auth_provider.dart';
 import '../../../providers/grammar_topic_provider.dart';
 import '../../../providers/class_provider.dart';
 import '../../../services/supabase_service.dart';
-import '../../../models/question_model.dart';
-import '../../../models/class_model.dart';
+import '../../../models/grammar_topic_model.dart';
+import '../../../models/student_topic_usage_stats_model.dart';
 import '../../../utils/error_handler.dart';
-import '../../teacher/student_questions_screen.dart';
-import '../../../providers/teacher_auto_refresh_provider.dart';
+import '../../../widgets/teacher_tab_top_bar.dart';
+import '../../../widgets/teacher_badge_dialogs.dart';
+import '../../../widgets/statistics_more_menu_button.dart';
+import '../../../widgets/teacher_student_search_field.dart';
 
 class StatisticsTab extends StatefulWidget {
   const StatisticsTab({super.key});
@@ -22,104 +23,115 @@ class StatisticsTab extends StatefulWidget {
 class _StatisticsTabState extends State<StatisticsTab> {
   final SupabaseService _supabaseService = SupabaseService();
   final TextEditingController _searchController = TextEditingController();
-  Map<String, dynamic>? _overallStats;
   List<Map<String, dynamic>>? _individualStats;
   List<Map<String, dynamic>>? _filteredStats;
-  Map<String, Map<String, dynamic>> _studentStatistics = {}; // Cached statistics
+  Map<String, List<StudentTopicUsageStatsModel>> _topicUsageByStudent = {};
+  Map<String, String> _topicTitleById = {};
+  List<String> _classTopicIds = [];
+  /// 顯示用課程 id -> 同標題之所有 grammar_topic id（合併統計）
+  Map<String, List<String>> _topicIdGroupsByCanonicalId = {};
+  /// 顯示用課程 id -> 所屬班級 id
+  Map<String, String?> _canonicalTopicClassId = {};
   bool _isLoading = true;
-  String? _selectedClassId;
-  bool _isTopPanelCollapsed = false; // 頂部篩選與整體統計收合狀態
 
-  late TeacherAutoRefreshProvider _autoRefreshProvider;
-  int _lastRefreshToken = -1;
-  bool _listenerAttached = false;
+  ClassProvider? _classProvider;
+  String? _lastLoadedClassId;
+  bool _classListenerAttached = false;
+  static const Object _allClassesKey = Object();
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _autoRefreshProvider = Provider.of<TeacherAutoRefreshProvider>(context, listen: false);
-      _lastRefreshToken = _autoRefreshProvider.refreshToken;
-      _autoRefreshProvider.addListener(_handleAutoRefreshTokenChanged);
-      _listenerAttached = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      _classProvider = Provider.of<ClassProvider>(context, listen: false);
+      _lastLoadedClassId = _classProvider!.selectedClass?.id;
+      _classProvider!.addListener(_onSelectedClassChanged);
+      _classListenerAttached = true;
 
       final authProvider = Provider.of<AuthProvider>(context, listen: false);
       if (authProvider.currentUser != null) {
-        Provider.of<ClassProvider>(context, listen: false)
+        await Provider.of<ClassProvider>(context, listen: false)
             .loadTeacherClasses(authProvider.currentUser!.id);
       }
+      if (mounted) await _loadStatistics();
     });
+  }
+
+  @override
+  void dispose() {
+    if (_classListenerAttached) {
+      _classProvider?.removeListener(_onSelectedClassChanged);
+    }
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _onSelectedClassChanged() {
+    if (!mounted || _classProvider == null) return;
+    final nextKey = _classProvider!.selectedClass?.id ?? _allClassesKey;
+    final prevKey = _lastLoadedClassId ?? _allClassesKey;
+    if (nextKey == prevKey) return;
+    _searchController.clear();
     _loadStatistics();
   }
 
-  void _handleAutoRefreshTokenChanged() {
-    if (!mounted) return;
-    final token = _autoRefreshProvider.refreshToken;
-    if (token != _lastRefreshToken) {
-      _lastRefreshToken = token;
-      _loadStatistics();
-    }
+  Future<void> _onPullRefresh() async {
+    await _loadStatistics();
   }
 
   Future<void> _loadStatistics() async {
+    final selectedClassId =
+        Provider.of<ClassProvider>(context, listen: false).selectedClass?.id;
+
     setState(() {
       _isLoading = true;
+      _individualStats = [];
+      _filteredStats = [];
+      _topicUsageByStudent = {};
+      _classTopicIds = [];
+      _topicTitleById = {};
+      _topicIdGroupsByCanonicalId = {};
+      _canonicalTopicClassId = {};
     });
 
     try {
-      final allStudentsProgress = await _supabaseService.getAllStudentsProgress(classId: _selectedClassId);
-      
-      // Get all student IDs for batch query
-      final studentIds = allStudentsProgress.map((s) => s['student_id'] as String).toList();
-      
-      // Batch query all statistics at once (optimized: 1 query instead of N queries)
-      final allStats = await _supabaseService.getAllStudentsStatistics(studentIds);
-      print('Statistics: Batch loaded stats for ${allStats.length} students');
-
-      Map<String, int> weeklyLogins = {};
-      int totalQuestions = 0;
-      int totalUsageTime = 0;
-      double totalSessionDuration = 0;
-      int sessionCount = 0;
-
-      for (var student in allStudentsProgress) {
-        final studentId = student['student_id'] as String;
-        final stats = allStats[studentId] ?? {
-          'weekly_login_frequency': 0,
-          'total_questions': 0,
-          'total_usage_time': 0,
-          'average_session_duration': 0.0,
-        };
-        
-        weeklyLogins[studentId] = stats['weekly_login_frequency'] as int;
-        totalQuestions += stats['total_questions'] as int;
-        
-        final usageTime = stats['total_usage_time'] as int;
-        totalUsageTime += usageTime > 0 ? usageTime : 0;
-        
-        final avgDuration = stats['average_session_duration'];
-        final avgDurationValue = avgDuration is double 
-            ? avgDuration 
-            : (avgDuration as num).toDouble();
-        
-        if (avgDurationValue > 0) {
-          totalSessionDuration += avgDurationValue;
-          sessionCount++;
-        }
+      final grammarTopicProvider =
+          Provider.of<GrammarTopicProvider>(context, listen: false);
+      if (selectedClassId != null) {
+        await grammarTopicProvider.loadTopics(classId: selectedClassId);
+      } else {
+        await grammarTopicProvider.loadTopics();
       }
+      final classTopics = selectedClassId != null
+          ? grammarTopicProvider.topics
+              .where((t) => t.classId == selectedClassId)
+              .toList()
+          : grammarTopicProvider.topics;
+      final deduped = _dedupeClassTopicsForDisplay(classTopics);
+      final topicTitleById = deduped.titleById;
+      final classTopicIds = deduped.canonicalTopicIds;
+      final topicIdGroupsByCanonicalId = deduped.idGroupsByCanonicalId;
+      final canonicalTopicClassId = deduped.classIdByCanonicalId;
+
+      final allStudentsProgress =
+          await _supabaseService.getAllStudentsProgress(classId: selectedClassId);
+
+      final topicUsageByStudent =
+          await _supabaseService.getStudentTopicUsageStatsForClass(
+        classId: selectedClassId,
+        topicIds: classTopicIds.isEmpty ? null : classTopicIds,
+      );
 
       setState(() {
-        _studentStatistics = allStats;
-        _overallStats = {
-          'total_students': allStudentsProgress.length,
-          'total_questions': totalQuestions,
-          'total_usage_time': totalUsageTime,
-          'average_session_duration': sessionCount > 0 ? totalSessionDuration / sessionCount : 0,
-          'weekly_logins': weeklyLogins,
-        };
+        _topicTitleById = topicTitleById;
+        _classTopicIds = classTopicIds;
+        _topicIdGroupsByCanonicalId = topicIdGroupsByCanonicalId;
+        _canonicalTopicClassId = canonicalTopicClassId;
+        _topicUsageByStudent = topicUsageByStudent;
         _individualStats = allStudentsProgress;
         _filteredStats = allStudentsProgress;
         _isLoading = false;
+        _lastLoadedClassId = selectedClassId;
       });
     } catch (e, stackTrace) {
       print('Error loading statistics: $e');
@@ -158,19 +170,8 @@ class _StatisticsTabState extends State<StatisticsTab> {
   }
 
   @override
-  void dispose() {
-    if (_listenerAttached) {
-      _autoRefreshProvider.removeListener(_handleAutoRefreshTokenChanged);
-    }
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final authProvider = Provider.of<AuthProvider>(context);
     final classProvider = Provider.of<ClassProvider>(context);
-    final user = authProvider.currentUser;
     final viewInsets = MediaQuery.of(context).viewInsets;
     final bottomPadding = MediaQuery.of(context).padding.bottom;
 
@@ -178,6 +179,7 @@ class _StatisticsTabState extends State<StatisticsTab> {
       backgroundColor: Colors.transparent,
       resizeToAvoidBottomInset: false,
       body: SafeArea(
+        bottom: false,
         child: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
@@ -192,328 +194,113 @@ class _StatisticsTabState extends State<StatisticsTab> {
           ),
           child: Column(
             children: [
-            // 頂部區域
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
-              child: Row(
-                children: [
-                  // 頭像和問候語
-                  Expanded(
-                    child: Row(
-                      children: [
-                        CircleAvatar(
-                          radius: 28,
-                          backgroundColor: Colors.green.shade400,
-                          child: Text(
-                            user?.name.isNotEmpty == true ? user!.name[0].toUpperCase() : 'T',
-                            style: const TextStyle(
-                              fontSize: 24,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        const Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                '數據統計',
-                                style: TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF1F2937),
-                                ),
-                              ),
-                              Text(
-                                '查看學習數據分析',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  // 右側圖標
-                  Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.refresh),
-                        onPressed: () {
-                          _autoRefreshProvider.forceRefreshNow();
-                        },
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.assessment),
-                        onPressed: () {
-                          _showCourseProgressDialog(context);
-                        },
-                      ),
-                      IconButton(
-                        tooltip: _isTopPanelCollapsed ? '展開篩選與統計' : '收起篩選與統計',
-                        icon: Icon(
-                          _isTopPanelCollapsed ? Icons.unfold_more : Icons.unfold_less,
-                        ),
-                        onPressed: () {
-                          setState(() {
-                            _isTopPanelCollapsed = !_isTopPanelCollapsed;
-                          });
-                        },
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Selector<TeacherAutoRefreshProvider, int>(
-                selector: (_, provider) => provider.remainingSeconds,
-                builder: (context, value, _) {
-                  return Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      '下次自動刷新：$value 秒',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey[700],
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
+            TeacherTabTopBar(
+              selectedClass: classProvider.selectedClass,
+              onClassSelected: (classId) async {
+                Provider.of<ClassProvider>(context, listen: false)
+                    .selectClassById(classId);
+              },
+              trailing: StatisticsMoreMenuButton(
+                onAward: () {
+                  showTeacherAwardBadgeDialog(
+                    context: context,
+                    supabaseService: _supabaseService,
+                    studentsProgress: _individualStats ?? [],
                   );
                 },
+                onLeaderboard: () {
+                  showClassBadgeLeaderboardDialog(
+                    context: context,
+                    supabaseService: _supabaseService,
+                  );
+                },
+                onProgress: () => _showCourseProgressDialog(context),
               ),
             ),
-            const SizedBox(height: 8),
-            AnimatedCrossFade(
-              duration: const Duration(milliseconds: 220),
-              crossFadeState: _isTopPanelCollapsed
-                  ? CrossFadeState.showSecond
-                  : CrossFadeState.showFirst,
-              firstChild: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.05),
-                        blurRadius: 8,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.class_, color: Colors.indigo.shade600),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: DropdownButtonHideUnderline(
-                          child: DropdownButton<String>(
-                            value: _selectedClassId,
-                            hint: const Text('所有班級'),
-                            isExpanded: true,
-                            items: [
-                              const DropdownMenuItem<String>(
-                                value: null,
-                                child: Text('所有班級'),
-                              ),
-                              ...classProvider.classes.map((classModel) => DropdownMenuItem<String>(
-                                value: classModel.id,
-                                child: Text(classModel.name),
-                              )),
-                            ],
-                            onChanged: (value) {
-                              setState(() {
-                                _selectedClassId = value;
-                              });
-                              _loadStatistics();
-                            },
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+            TeacherStudentSearchBar(
+              controller: _searchController,
+              onChanged: _filterStudents,
+            ),
+            Expanded(
+              child: RefreshIndicator(
+                onRefresh: _onPullRefresh,
+                child: _buildStatisticsScrollBody(
+                  viewInsets: viewInsets,
+                  bottomPadding: bottomPadding,
                 ),
               ),
-              secondChild: const SizedBox.shrink(),
             ),
-            SizedBox(height: _isTopPanelCollapsed ? 8 : 12),
-            // 內容區域
-            Expanded(
-              child: _isLoading
-                  ? const Center(
-                      child: _CuteLoadingIndicator(
-                        label: '分析數據中...',
-                      ),
-                    )
-                  : (_overallStats == null && _individualStats == null)
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.error_outline,
-                                size: 64,
-                                color: Colors.grey[400],
-                              ),
-                              const SizedBox(height: 16),
-                              Text(
-                                '無法載入數據',
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  color: Colors.grey[600],
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                '請檢查網絡連接或稍後再試',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey[500],
-                                ),
-                              ),
-                              const SizedBox(height: 24),
-                              ElevatedButton.icon(
-                                onPressed: _loadStatistics,
-                                icon: const Icon(Icons.refresh),
-                                label: const Text('重新載入'),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.green.shade600,
-                                  foregroundColor: Colors.white,
-                                ),
-                              ),
-                            ],
-                          ),
-                        )
-                      : SingleChildScrollView(
-                      padding: EdgeInsets.only(
-                        left: 20,
-                        right: 20,
-                        bottom: viewInsets.bottom + bottomPadding + 100,
-                      ),
-                      child: Column(
+          ],
+        ),
+      ),
+      ),
+    );
+  }
+
+  Widget _buildStatisticsScrollBody({
+    required EdgeInsets viewInsets,
+    required double bottomPadding,
+  }) {
+    if (_isLoading) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          SizedBox(height: MediaQuery.of(context).size.height * 0.25),
+          const Center(
+            child: _CuteLoadingIndicator(
+              label: '分析數據中...',
+            ),
+          ),
+        ],
+      );
+    }
+
+    if (_individualStats == null) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          SizedBox(height: MediaQuery.of(context).size.height * 0.2),
+          Icon(
+            Icons.error_outline,
+            size: 64,
+            color: Colors.grey[400],
+          ),
+          const SizedBox(height: 16),
+          Center(
+            child: Text(
+              '無法載入數據',
+              style: TextStyle(
+                fontSize: 18,
+                color: Colors.grey[600],
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Center(
+            child: Text(
+              '請檢查網絡連接後，向下拉動即可重新載入',
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.grey[500],
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return SingleChildScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: EdgeInsets.only(
+        left: 20,
+        right: 20,
+        top: 8,
+        bottom: viewInsets.bottom + bottomPadding + 100,
+      ),
+      child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          if (_overallStats != null && !_isTopPanelCollapsed) ...[
-                            Container(
-                              padding: const EdgeInsets.all(24),
-                              decoration: BoxDecoration(
-                                color: Colors.amber.shade400,
-                                borderRadius: BorderRadius.circular(20),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.1),
-                                    blurRadius: 10,
-                                    offset: const Offset(0, 4),
-                                  ),
-                                ],
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const Text(
-                                    '整體統計',
-                                    style: TextStyle(
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.bold,
-                                      color: Color(0xFF1F2937),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 20),
-                                  _buildStatCard(
-                                    icon: Icons.people,
-                                    label: '總學生數',
-                                    value: '${_overallStats!['total_students']}',
-                                    color: Colors.blue,
-                                  ),
-                                  const SizedBox(height: 12),
-                                  _buildStatCard(
-                                    icon: Icons.quiz,
-                                    label: '總題數',
-                                    value: '${_overallStats!['total_questions']}',
-                                    color: Colors.green,
-                                  ),
-                                  const SizedBox(height: 12),
-                                  _buildStatCard(
-                                    icon: Icons.timer,
-                                    label: '總使用時長',
-                                    value: '${math.max(0, _overallStats!['total_usage_time'] as int)} 分鐘',
-                                    color: Colors.orange,
-                                  ),
-                                  const SizedBox(height: 12),
-                                  _buildStatCard(
-                                    icon: Icons.access_time,
-                                    label: '平均單次使用時長',
-                                    value: '${math.max(0.0, (_overallStats!['average_session_duration'] as num).toDouble()).toStringAsFixed(1)} 分鐘',
-                                    color: Colors.purple,
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(height: 24),
-                          ],
-                          const Text(
-                            '個別學生統計',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF1F2937),
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          // 搜尋框
-                          Container(
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(12),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.05),
-                                  blurRadius: 8,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ],
-                            ),
-                            child: ValueListenableBuilder<TextEditingValue>(
-                              valueListenable: _searchController,
-                              builder: (context, value, child) {
-                                return TextField(
-                                  controller: _searchController,
-                                  decoration: InputDecoration(
-                                    hintText: '搜尋學生（姓名或學號）',
-                                    prefixIcon: const Icon(Icons.search),
-                                    suffixIcon: value.text.isNotEmpty
-                                        ? IconButton(
-                                            icon: const Icon(Icons.clear),
-                                            onPressed: () {
-                                              _searchController.clear();
-                                              _filterStudents('');
-                                            },
-                                          )
-                                        : null,
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                      borderSide: BorderSide.none,
-                                    ),
-                                    filled: true,
-                                    fillColor: Colors.white,
-                                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                                  ),
-                                  onChanged: _filterStudents,
-                                );
-                              },
-                            ),
-                          ),
-                          const SizedBox(height: 16),
                           if (_filteredStats != null)
                             if (_filteredStats!.isEmpty)
                               Center(
@@ -531,117 +318,142 @@ class _StatisticsTabState extends State<StatisticsTab> {
                             else
                               ..._filteredStats!.map((student) {
                                 final studentId = student['student_id'] as String;
-                                final stats = _studentStatistics[studentId] ?? {
-                                  'weekly_login_frequency': 0,
-                                  'average_session_duration': 0.0,
-                                  'total_questions': 0,
-                                  'total_usage_time': 0,
+                                final studentName =
+                                    student['student_name']?.toString().isNotEmpty ==
+                                            true
+                                        ? student['student_name'] as String
+                                        : '未設定姓名';
+                                final topicStats =
+                                    _topicUsageByStudent[studentId] ?? [];
+                                final statsByTopicId = {
+                                  for (final s in topicStats)
+                                    s.grammarTopicId: s,
                                 };
-                                return InkWell(
-                                  onTap: () {
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) => StudentQuestionsScreen(
-                                          studentId: student['student_id'] as String,
-                                          studentName: student['student_name']?.toString().isNotEmpty == true
-                                              ? student['student_name'] as String
-                                              : '未設定姓名',
-                                          studentIdNumber: student['student_id_number'] as String?,
+                                final studentTopicIds =
+                                    _topicIdsForStudent(student);
+
+                                return Container(
+                                  margin: const EdgeInsets.only(bottom: 16),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(alpha: 0.82),
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                  child: Theme(
+                                    data: Theme.of(context).copyWith(
+                                      dividerColor: Colors.transparent,
+                                    ),
+                                    child: ExpansionTile(
+                                      tilePadding: const EdgeInsets.symmetric(
+                                        horizontal: 16,
+                                        vertical: 4,
+                                      ),
+                                      childrenPadding: const EdgeInsets.fromLTRB(
+                                        16,
+                                        0,
+                                        16,
+                                        16,
+                                      ),
+                                      leading: Icon(
+                                        Icons.person,
+                                        color: Colors.green.shade600,
+                                      ),
+                                      title: Text(
+                                        studentName,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: Color(0xFF1F2937),
                                         ),
                                       ),
-                                    );
-                                  },
-                                  child: Container(
-                                    margin: const EdgeInsets.only(bottom: 16),
-                                    padding: const EdgeInsets.all(20),
-                                    decoration: BoxDecoration(
-                                      color: Colors.white,
-                                      borderRadius: BorderRadius.circular(16),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: Colors.black.withOpacity(0.05),
-                                          blurRadius: 8,
-                                          offset: const Offset(0, 2),
-                                        ),
-                                      ],
-                                    ),
-                                    child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Row(
-                                        children: [
-                                          Container(
-                                            width: 40,
-                                            height: 40,
-                                            decoration: BoxDecoration(
-                                              color: Colors.green.shade50,
-                                              borderRadius: BorderRadius.circular(10),
-                                            ),
-                                            child: Icon(
-                                              Icons.person,
-                                              color: Colors.green.shade600,
-                                            ),
-                                          ),
-                                          const SizedBox(width: 12),
-                                          Expanded(
-                                            child: Column(
-                                              crossAxisAlignment: CrossAxisAlignment.start,
-                                              children: [
-                                                Text(
-                                                  student['student_name']?.toString().isNotEmpty == true
-                                                      ? student['student_name'] as String
-                                                      : '未設定姓名',
-                                                  style: const TextStyle(
-                                                    fontSize: 16,
-                                                    fontWeight: FontWeight.bold,
-                                                    color: Color(0xFF1F2937),
+                                      subtitle: student['student_id_number']
+                                                  ?.toString()
+                                                  .isNotEmpty ==
+                                              true
+                                          ? Text(
+                                              '學號: ${student['student_id_number']}',
+                                              style: TextStyle(
+                                                fontSize: 13,
+                                                color: Colors.grey[600],
+                                              ),
+                                            )
+                                          : null,
+                                      children: _classTopicIds.isEmpty
+                                          ? [
+                                              Padding(
+                                                padding:
+                                                    const EdgeInsets.all(8),
+                                                child: Text(
+                                                  '此班級尚無課程',
+                                                  style: TextStyle(
+                                                    color: Colors.grey[600],
                                                   ),
                                                 ),
-                                                if (student['student_id_number']?.toString().isNotEmpty == true) ...[
-                                                  const SizedBox(height: 4),
-                                                  Text(
-                                                    '學號: ${student['student_id_number']}',
-                                                    style: TextStyle(
-                                                      fontSize: 14,
-                                                      color: Colors.grey[600],
+                                              ),
+                                            ]
+                                          : studentTopicIds.isEmpty
+                                              ? [
+                                                  Padding(
+                                                    padding:
+                                                        const EdgeInsets.all(
+                                                            8),
+                                                    child: Text(
+                                                      student['class_id']
+                                                                  ?.toString()
+                                                                  .isNotEmpty ==
+                                                              true
+                                                          ? '此學生所屬班級尚無課程'
+                                                          : '此學生尚未分配班級，無法顯示課程數據',
+                                                      style: TextStyle(
+                                                        color:
+                                                            Colors.grey[600],
+                                                      ),
                                                     ),
                                                   ),
-                                                ],
-                                              ],
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 16),
-                                      _buildStatRow('每周登入頻率', '${math.max(0, stats['weekly_login_frequency'] as int)} 次'),
-                                      const SizedBox(height: 8),
-                                      _buildStatRow('單次使用時長', '${math.max(0.0, (stats['average_session_duration'] as num).toDouble()).toStringAsFixed(1)} 分鐘'),
-                                      const SizedBox(height: 8),
-                                      _buildStatRow('練習題數', '${math.max(0, stats['total_questions'] as int)}'),
-                                      const SizedBox(height: 8),
-                                      _buildStatRow('全期間使用總時長', '${math.max(0, stats['total_usage_time'] as int)} 分鐘'),
-                                    ],
-                                  ),
+                                                ]
+                                              : studentTopicIds
+                                              .map((topicId) {
+                                              final relatedIds =
+                                                  _topicIdGroupsByCanonicalId[
+                                                          topicId] ??
+                                                      [topicId];
+                                              final stats =
+                                                  _mergeTopicStatsForStudent(
+                                                studentId: studentId,
+                                                topicIds: relatedIds,
+                                                statsByTopicId: statsByTopicId,
+                                              );
+                                              return _buildTopicUsageBlock(
+                                                topicTitle: _topicTitleById[
+                                                        topicId] ??
+                                                    '未知課程',
+                                                stats: stats,
+                                              );
+                                            })
+                                              .toList(),
+                                    ),
                                   ),
                                 );
                               }),
                           const SizedBox(height: 20),
                         ],
                       ),
-                    ),
-            ),
-          ],
-        ),
-      ),
-      ),
     );
   }
 
   Future<void> _showCourseProgressDialog(BuildContext context) async {
     final grammarTopicProvider = Provider.of<GrammarTopicProvider>(context, listen: false);
-    await grammarTopicProvider.loadTopics();
-    
+    final classId =
+        Provider.of<ClassProvider>(context, listen: false).selectedClass?.id;
+    if (classId != null) {
+      await grammarTopicProvider.loadTopics(classId: classId);
+    } else {
+      await grammarTopicProvider.loadTopics();
+    }
+    final topics = classId != null
+        ? grammarTopicProvider.topics
+            .where((t) => t.classId == classId)
+            .toList()
+        : grammarTopicProvider.topics;
+
     String? selectedTopicId;
     
     await showDialog(
@@ -684,7 +496,7 @@ class _StatisticsTabState extends State<StatisticsTab> {
                     hint: const Text('請選擇課程'),
                     isExpanded: true,
                     underline: const SizedBox(),
-                    items: grammarTopicProvider.topics.map((topic) {
+                    items: topics.map((topic) {
                       return DropdownMenuItem<String>(
                         value: topic.id,
                         child: Text(topic.title),
@@ -701,7 +513,10 @@ class _StatisticsTabState extends State<StatisticsTab> {
                 // 學生進度列表
                 if (selectedTopicId != null)
                   FutureBuilder<List<Map<String, dynamic>>>(
-                    future: _loadCourseStudentsProgress(selectedTopicId!),
+                    future: _loadCourseStudentsProgress(
+                      selectedTopicId!,
+                      classId: classId,
+                    ),
                     builder: (context, snapshot) {
                       if (snapshot.connectionState == ConnectionState.waiting) {
                         return const Center(
@@ -743,12 +558,8 @@ class _StatisticsTabState extends State<StatisticsTab> {
                               margin: const EdgeInsets.only(bottom: 12),
                               padding: const EdgeInsets.all(12),
                               decoration: BoxDecoration(
-                                color: isCompleted ? Colors.green[50] : Colors.white,
+                                color: Colors.white.withValues(alpha: 0.82),
                                 borderRadius: BorderRadius.circular(8),
-                                border: Border.all(
-                                  color: isCompleted ? Colors.green : Colors.grey[300]!,
-                                  width: isCompleted ? 2 : 1,
-                                ),
                               ),
                               child: Row(
                                 children: [
@@ -841,10 +652,13 @@ class _StatisticsTabState extends State<StatisticsTab> {
     );
   }
 
-  Future<List<Map<String, dynamic>>> _loadCourseStudentsProgress(String grammarTopicId) async {
+  Future<List<Map<String, dynamic>>> _loadCourseStudentsProgress(
+    String grammarTopicId, {
+    String? classId,
+  }) async {
     try {
-      // Get all students
-      final allStudents = await _supabaseService.getAllStudentsProgress();
+      final allStudents =
+          await _supabaseService.getAllStudentsProgress(classId: classId);
       final studentIds = allStudents.map((s) => s['student_id'] as String).toList();
       
       // Batch query all questions for all students (optimized: 1 query instead of N queries)
@@ -934,56 +748,81 @@ class _StatisticsTabState extends State<StatisticsTab> {
     }
   }
 
-  Widget _buildStatCard({
-    required IconData icon,
-    required String label,
-    required String value,
-    required Color color,
+  Widget _buildTopicUsageBlock({
+    required String topicTitle,
+    required StudentTopicUsageStatsModel stats,
   }) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Colors.green.shade50,
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.green.shade100),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(icon, color: color),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: Colors.grey[600],
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  value,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF1F2937),
-                  ),
-                ),
-              ],
+          Text(
+            topicTitle,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
+              color: Colors.green.shade800,
             ),
           ),
+          const SizedBox(height: 10),
+          _buildStatRow(
+            '平均每題完成時間',
+            _formatDurationSeconds(stats.averageQuestionCompletionSeconds),
+          ),
+          const SizedBox(height: 6),
+          _buildStatRow(
+            '修改題目次數',
+            '${stats.questionEditCount} 次',
+          ),
+          const SizedBox(height: 6),
+          _buildStatRow('登入次數', '${stats.loginCount} 次'),
+          const SizedBox(height: 6),
+          _buildStatRow(
+            '平均單次使用時間',
+            '${stats.averageSessionMinutes.toStringAsFixed(1)} 分鐘',
+          ),
+          const SizedBox(height: 6),
+          _buildStatRow(
+            '文法重點瀏覽',
+            '${stats.grammarKeyPointViewCount} 次',
+          ),
+          const SizedBox(height: 6),
+          _buildStatRow(
+            '出題重點瀏覽',
+            '${stats.reminderViewCount} 次',
+          ),
+          if (stats.questionCompletionCount > 0) ...[
+            const SizedBox(height: 6),
+            _buildStatRow(
+              '階段完成次數',
+              '${stats.questionCompletionCount} 次',
+            ),
+          ],
         ],
       ),
     );
+  }
+
+  String _formatDurationSeconds(double seconds) {
+    if (seconds <= 0) return '尚無資料';
+    final total = seconds.round();
+    if (total < 60) return '$total 秒';
+    final minutes = total ~/ 60;
+    final remain = total % 60;
+    if (minutes < 60) {
+      return remain > 0 ? '$minutes 分 $remain 秒' : '$minutes 分鐘';
+    }
+    final hours = minutes ~/ 60;
+    final m = minutes % 60;
+    return m > 0 ? '$hours 小時 $m 分' : '$hours 小時';
   }
 
   Widget _buildStatRow(String label, String value) {
@@ -1007,6 +846,106 @@ class _StatisticsTabState extends State<StatisticsTab> {
         ),
       ],
     );
+  }
+
+  static String _topicDedupeKey(GrammarTopicModel topic) {
+    final classPart = topic.classId ?? '';
+    return '$classPart::${topic.title.trim()}';
+  }
+
+  /// 同班級、同標題若有多筆課程，只保留一張卡片（以最新建立的為代表）。
+  /// 不同班級即使標題相同也不合併，避免學生看到非自己班級的課程數據。
+  ({
+    Map<String, String> titleById,
+    List<String> canonicalTopicIds,
+    Map<String, List<String>> idGroupsByCanonicalId,
+    Map<String, String?> classIdByCanonicalId,
+  }) _dedupeClassTopicsForDisplay(List<GrammarTopicModel> classTopics) {
+    final seenIds = <String>{};
+    final uniqueById = <GrammarTopicModel>[];
+    for (final t in classTopics) {
+      if (seenIds.add(t.id)) {
+        uniqueById.add(t);
+      }
+    }
+
+    final canonicalByKey = <String, GrammarTopicModel>{};
+    final idsByKey = <String, List<String>>{};
+    for (final t in uniqueById) {
+      final key = _topicDedupeKey(t);
+      idsByKey.putIfAbsent(key, () => []).add(t.id);
+      final current = canonicalByKey[key];
+      if (current == null || t.createdAt.isAfter(current.createdAt)) {
+        canonicalByKey[key] = t;
+      }
+    }
+
+    final canonicalTopics = canonicalByKey.values.toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
+    return (
+      titleById: {for (final t in canonicalTopics) t.id: t.title},
+      canonicalTopicIds: canonicalTopics.map((t) => t.id).toList(),
+      idGroupsByCanonicalId: {
+        for (final entry in canonicalByKey.entries)
+          entry.value.id: List<String>.from(idsByKey[entry.key]!),
+      },
+      classIdByCanonicalId: {
+        for (final t in canonicalTopics) t.id: t.classId,
+      },
+    );
+  }
+
+  /// 僅顯示與學生 [class_id] 相同班級的課程卡片。
+  List<String> _topicIdsForStudent(Map<String, dynamic> student) {
+    final studentClassId = student['class_id']?.toString();
+    if (studentClassId == null || studentClassId.isEmpty) {
+      return [];
+    }
+    return _classTopicIds
+        .where(
+          (topicId) => _canonicalTopicClassId[topicId] == studentClassId,
+        )
+        .toList();
+  }
+
+  StudentTopicUsageStatsModel _mergeTopicStatsForStudent({
+    required String studentId,
+    required List<String> topicIds,
+    required Map<String, StudentTopicUsageStatsModel> statsByTopicId,
+  }) {
+    StudentTopicUsageStatsModel? merged;
+    for (final topicId in topicIds) {
+      final stats = statsByTopicId[topicId];
+      if (stats == null) continue;
+      if (merged == null) {
+        merged = stats;
+        continue;
+      }
+      merged = StudentTopicUsageStatsModel(
+        studentId: studentId,
+        grammarTopicId: topicIds.first,
+        questionCompletionCount:
+            merged.questionCompletionCount + stats.questionCompletionCount,
+        totalQuestionCompletionSeconds:
+            merged.totalQuestionCompletionSeconds +
+                stats.totalQuestionCompletionSeconds,
+        questionEditCount:
+            merged.questionEditCount + stats.questionEditCount,
+        loginCount: merged.loginCount + stats.loginCount,
+        totalSessionMinutes:
+            merged.totalSessionMinutes + stats.totalSessionMinutes,
+        grammarKeyPointViewCount: merged.grammarKeyPointViewCount +
+            stats.grammarKeyPointViewCount,
+        reminderViewCount:
+            merged.reminderViewCount + stats.reminderViewCount,
+      );
+    }
+    return merged ??
+        StudentTopicUsageStatsModel(
+          studentId: studentId,
+          grammarTopicId: topicIds.first,
+        );
   }
 }
 

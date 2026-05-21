@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/grammar_topic_model.dart';
 import '../services/supabase_service.dart';
 import '../services/notification_service.dart';
+import '../services/student_activity_tracker.dart';
 
 class GrammarTopicProvider with ChangeNotifier {
   final SupabaseService _supabaseService = SupabaseService();
@@ -326,6 +327,8 @@ class GrammarTopicProvider with ChangeNotifier {
       return;
     }
     _selectedTopic = await _supabaseService.getGrammarTopic(topicId);
+    await StudentActivityTracker.instance.setActiveTopicId(topicId);
+    await StudentActivityTracker.instance.trackTopicLoginIfNeeded(topicId);
     notifyListeners();
   }
 

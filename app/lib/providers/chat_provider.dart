@@ -26,12 +26,16 @@ class ChatProvider with ChangeNotifier {
   String? get currentStudentId => _currentStudentId;
 
   void setCurrentQuestion(String? questionId, String? grammarTopicId, {String? studentId}) {
+    final questionChanged = questionId != _currentQuestionId ||
+        grammarTopicId != _currentGrammarTopicId;
     _currentQuestionId = questionId;
     _currentGrammarTopicId = grammarTopicId;
     if (studentId != null) {
       _currentStudentId = studentId;
     }
-    _selectedStage = null; // 切換題目時重置階段
+    if (questionChanged) {
+      _selectedStage = null;
+    }
     notifyListeners();
   }
 

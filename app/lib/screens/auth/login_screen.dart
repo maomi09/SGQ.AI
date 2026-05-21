@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../../widgets/sgq_logo.dart';
+import '../../widgets/login_animated_background.dart';
 import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/supabase_service.dart';
@@ -243,41 +245,28 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 32.0),
-            child: Form(
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          const LoginAnimatedBackground(),
+          SafeArea(
+            child: Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24.0,
+                  vertical: 32.0,
+                ),
+                child: Form(
               key: _formKey,
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   const SizedBox(height: 40),
-                  // LOGO
-                  Container(
-                    width: 120,
-                    height: 120,
-                    decoration: BoxDecoration(
-                      color: Colors.green.shade50,
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.green.shade100.withOpacity(0.3),
-                          blurRadius: 20,
-                          offset: const Offset(0, 10),
-                        ),
-                      ],
-                    ),
-                    child: Icon(
-                      Icons.school,
-                      size: 64,
-                      color: Colors.green.shade600,
-                    ),
-                  ),
+                  const SgqLogo(size: 120),
                   const SizedBox(height: 24),
                   Text(
-                    _isLogin ? 'SGQ.AI' : 'Create account',
+                    _isLogin ? 'SGQ AI' : 'Create account',
                     style: const TextStyle(
                       fontSize: 32,
                       fontWeight: FontWeight.bold,
@@ -873,6 +862,8 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           ),
         ),
+      ),
+        ],
       ),
     );
   }

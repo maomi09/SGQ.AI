@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -8,10 +7,8 @@ import '../../../providers/grammar_topic_provider.dart';
 import '../../../providers/class_provider.dart';
 import '../../../services/supabase_service.dart';
 import '../../../models/question_model.dart';
-import '../../../models/badge_model.dart';
-import '../../../utils/user_animal_helper.dart';
 import '../../../utils/error_handler.dart';
-import '../../../providers/teacher_auto_refresh_provider.dart';
+import '../../../widgets/teacher_tab_top_bar.dart';
 
 class DashboardTab extends StatefulWidget {
   const DashboardTab({super.key});
@@ -22,94 +19,75 @@ class DashboardTab extends StatefulWidget {
 
 class _DashboardTabState extends State<DashboardTab> {
   final SupabaseService _supabaseService = SupabaseService();
-  Timer? _onlineStatusTimer;
   List<Map<String, dynamic>> _studentsProgress = [];
   bool _isLoading = true;
   Set<String> _resolvedStudentTopicKeys = {}; // 已標記為「已完成」的學生-課程鍵值
   Map<String, bool> _studentsOnlineStatus = {}; // 學生的登入狀態
   Map<String, bool> _studentsAiUsageStatus = {}; // 學生是否使用過 AI 小幫手
-  String? _selectedClassId; // 選中的班級 ID
   bool _isTopPanelCollapsed = false; // 頂部篩選與資訊字卡收合狀態
   Map<String, int> _topicCompletionTargets = {};
 
-  late TeacherAutoRefreshProvider _autoRefreshProvider;
-  int _lastRefreshToken = -1;
-  bool _listenerAttached = false;
+  ClassProvider? _classProvider;
+  String? _lastLoadedClassId;
+  bool _classListenerAttached = false;
+  static const Object _allClassesKey = Object();
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      // 啟動共用倒數與刷新事件監聽（讓 Dashboard / Statistics 同步）
-      _autoRefreshProvider = Provider.of<TeacherAutoRefreshProvider>(context, listen: false);
-      _lastRefreshToken = _autoRefreshProvider.refreshToken;
-      _autoRefreshProvider.addListener(_handleAutoRefreshTokenChanged);
-      _listenerAttached = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      _classProvider = Provider.of<ClassProvider>(context, listen: false);
+      _lastLoadedClassId = _classProvider!.selectedClass?.id;
+      _classProvider!.addListener(_onSelectedClassChanged);
+      _classListenerAttached = true;
 
       final authProvider = Provider.of<AuthProvider>(context, listen: false);
       if (authProvider.currentUser != null) {
-        // 載入老師的班級列表
-        Provider.of<ClassProvider>(context, listen: false)
+        await Provider.of<ClassProvider>(context, listen: false)
             .loadTeacherClasses(authProvider.currentUser!.id);
       }
-      Provider.of<GrammarTopicProvider>(context, listen: false).loadTopics();
+      if (mounted) {
+        await _loadStudentsProgress();
+      }
     });
-    _loadStudentsProgress();
-    _startOnlineStatusPolling();
   }
 
   @override
   void dispose() {
-    _onlineStatusTimer?.cancel();
-    _onlineStatusTimer = null;
-    if (_listenerAttached) {
-      _autoRefreshProvider.removeListener(_handleAutoRefreshTokenChanged);
+    if (_classListenerAttached) {
+      _classProvider?.removeListener(_onSelectedClassChanged);
     }
     super.dispose();
   }
 
-  void _startOnlineStatusPolling() {
-    _onlineStatusTimer?.cancel();
-    _onlineStatusTimer = Timer.periodic(const Duration(seconds: 10), (_) async {
-      if (!mounted || _studentsProgress.isEmpty) return;
-      final studentIds = _studentsProgress
-          .map((s) => s['student_id'] as String?)
-          .whereType<String>()
-          .toList();
-      if (studentIds.isEmpty) return;
-      try {
-        final onlineMap = await _supabaseService.getStudentsOnlineStatus(studentIds);
-        if (!mounted) return;
-        setState(() {
-          _studentsOnlineStatus = onlineMap;
-        });
-      } catch (_) {
-        // 在線狀態輪詢失敗時忽略，避免影響主要頁面
-      }
-    });
+  Future<void> _onPullRefresh() async {
+    await _loadStudentsProgress();
   }
 
-  void _handleAutoRefreshTokenChanged() {
-    if (!mounted) return;
-    final token = _autoRefreshProvider.refreshToken;
-    if (token != _lastRefreshToken) {
-      _lastRefreshToken = token;
-      _loadStudentsProgress();
-    }
+  void _onSelectedClassChanged() {
+    if (!mounted || _classProvider == null) return;
+    final nextKey = _classProvider!.selectedClass?.id ?? _allClassesKey;
+    final prevKey = _lastLoadedClassId ?? _allClassesKey;
+    if (nextKey == prevKey) return;
+    _loadStudentsProgress();
   }
 
   Future<void> _loadStudentsProgress() async {
+    final classProvider = Provider.of<ClassProvider>(context, listen: false);
+    final selectedClassId = classProvider.selectedClass?.id;
+
     setState(() {
       _isLoading = true;
+      _studentsProgress = [];
+      _studentsOnlineStatus = {};
     });
 
     try {
-      // 同時載入已標記為「已完成」的學生 ID
       _resolvedStudentTopicKeys =
           await _supabaseService.getResolvedStudentTopicKeys();
-      
+
       // 根據選中的班級篩選學生
-      final progress = await _supabaseService.getAllStudentsProgress(classId: _selectedClassId);
+      final progress = await _supabaseService.getAllStudentsProgress(classId: selectedClassId);
       
       // 獲取所有學生的登入狀態
       final studentIds = progress.map((s) => s['student_id'] as String).toList();
@@ -119,7 +97,7 @@ class _DashboardTabState extends State<DashboardTab> {
 
       // 獲取所有課程，建立 ID 到課程名稱的映射
       final grammarTopicProvider = Provider.of<GrammarTopicProvider>(context, listen: false);
-      await grammarTopicProvider.loadTopics(classId: _selectedClassId);
+      await grammarTopicProvider.loadTopics(classId: selectedClassId);
       final topics = grammarTopicProvider.topics;
       final topicMap = <String, String>{};
       final topicTargetMap = <String, int>{};
@@ -184,8 +162,13 @@ class _DashboardTabState extends State<DashboardTab> {
           currentStage = latestQuestion.stage;
           final currentGrammarTopicId = latestQuestion.grammarTopicId;
           final currentGrammarTopicName = topicMap[currentGrammarTopicId] ?? '未知課程';
-          final isStage4Completed = latestQuestion.completedStages?.containsKey(4) ?? false;
-          final totalQuestions = questions.length;
+          final topicQuestions = questions
+              .where((q) => q.grammarTopicId == currentGrammarTopicId)
+              .toList();
+          final isStage4Completed = topicQuestions.any(
+            (q) => q.completedStages?.containsKey(4) ?? false,
+          );
+          final totalQuestions = topicQuestions.length;
           final topicCompletionTarget =
               _topicCompletionTargets[currentGrammarTopicId] ?? 5;
           final resolvedKey = '$studentId:$currentGrammarTopicId';
@@ -201,7 +184,7 @@ class _DashboardTabState extends State<DashboardTab> {
           
           double avgStage = 0;
           if (totalQuestions > 0) {
-            for (var question in questions) {
+            for (var question in topicQuestions) {
               avgStage += question.stage;
             }
             avgStage = avgStage / totalQuestions;
@@ -256,6 +239,7 @@ class _DashboardTabState extends State<DashboardTab> {
       setState(() {
         _studentsProgress = enrichedProgress;
         _isLoading = false;
+        _lastLoadedClassId = selectedClassId;
       });
     } catch (e) {
       print('Dashboard: Error loading students progress: $e');
@@ -280,12 +264,11 @@ class _DashboardTabState extends State<DashboardTab> {
     }
   }
 
-  bool _isStuck(Map<String, dynamic> student) {
-    if (student['last_activity'] == null) return false;
-    final lastActivity = DateTime.parse(student['last_activity']);
-    final now = DateTime.now();
-    final duration = now.difference(lastActivity);
-    return duration.inHours > 24;
+  bool _isInactiveOverOneMinute(Map<String, dynamic> student) {
+    final lastActivity = student['last_activity'] as String?;
+    if (lastActivity == null || lastActivity.isEmpty) return true;
+    final activityTime = DateTime.parse(lastActivity);
+    return DateTime.now().difference(activityTime).inMinutes >= 1;
   }
 
   bool _isOffline(Map<String, dynamic> student) {
@@ -298,7 +281,131 @@ class _DashboardTabState extends State<DashboardTab> {
     if (student['is_overall_completed'] == true) {
       return false;
     }
-    return _isOffline(student) || _isStuck(student);
+    return _isOffline(student) || _isInactiveOverOneMinute(student);
+  }
+
+  String _alertReason(Map<String, dynamic> student) {
+    final parts = <String>[];
+    if (_isOffline(student)) parts.add('未登入');
+    if (_isInactiveOverOneMinute(student)) parts.add('逾 1 分鐘未活動');
+    return parts.isEmpty ? '—' : parts.join('、');
+  }
+
+  String _completionReason(Map<String, dynamic> student) {
+    if (student['has_manual_completion'] == true) return '手動標記完成';
+    if (student['is_stage_4_completed'] == true) return '已完成階段四';
+    if (student['is_completed_by_target'] == true) {
+      final target = student['completion_question_target'] as int? ?? 5;
+      final total = student['total_questions'] as int? ?? 0;
+      return '題數達標（$total / $target 題）';
+    }
+    return '已完成';
+  }
+
+  void _showStudentListDialog({
+    required String title,
+    required List<Map<String, dynamic>> students,
+    required String emptyMessage,
+    required String Function(Map<String, dynamic> student) subtitleFor,
+  }) {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 400,
+          child: students.isEmpty
+              ? Center(child: Text(emptyMessage))
+              : ListView.separated(
+                  itemCount: students.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (context, index) {
+                    final student = students[index];
+                    final name =
+                        student['student_name'] as String? ?? '未設定姓名';
+                    final idNumber = student['student_id_number'] as String?;
+                    final topicName =
+                        student['current_grammar_topic_name'] as String?;
+                    return ListTile(
+                      title: Text(name),
+                      subtitle: Text(
+                        [
+                          if (idNumber != null && idNumber.isNotEmpty)
+                            '學號：$idNumber',
+                          if (topicName != null && topicName.isNotEmpty)
+                            '課程：$topicName',
+                          subtitleFor(student),
+                        ].join('\n'),
+                      ),
+                      isThreeLine: true,
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('關閉'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDashboardStatDivider() {
+    return Container(
+      width: 1,
+      height: 36,
+      color: Colors.white.withValues(alpha: 0.65),
+    );
+  }
+
+  Widget _buildDashboardStatCell({
+    required int count,
+    required String label,
+    VoidCallback? onTap,
+  }) {
+    final content = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            '$count',
+            style: const TextStyle(
+              fontSize: 26,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF1F2937),
+            ),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+            color: Colors.grey.shade800,
+          ),
+        ),
+      ],
+    );
+
+    if (onTap == null) {
+      return Center(child: content);
+    }
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+        child: Center(child: content),
+      ),
+    );
   }
 
   String _getStageName(int stage) {
@@ -325,7 +432,7 @@ class _DashboardTabState extends State<DashboardTab> {
     Map<int, int> completedStagesCount,
     double avgStage,
     bool hasAlert,
-    bool isStuck,
+    bool isInactive,
     bool isOffline,
   ) {
     final totalQuestions = student['total_questions'] as int? ?? 0;
@@ -667,9 +774,9 @@ class _DashboardTabState extends State<DashboardTab> {
                                     color: Colors.red[700],
                                   ),
                                 ),
-                              if (isStuck)
+                              if (isInactive)
                                 Text(
-                                  '該學生在當前階段停留超過24小時',
+                                  '該學生逾 1 分鐘未活動',
                                   style: TextStyle(
                                     fontSize: 14,
                                     color: Colors.red[700],
@@ -822,12 +929,11 @@ class _DashboardTabState extends State<DashboardTab> {
 
   @override
   Widget build(BuildContext context) {
-    final authProvider = Provider.of<AuthProvider>(context);
     final classProvider = Provider.of<ClassProvider>(context);
-    final user = authProvider.currentUser;
 
     return Scaffold(
       body: SafeArea(
+        bottom: false,
         child: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
@@ -842,345 +948,62 @@ class _DashboardTabState extends State<DashboardTab> {
           ),
           child: Column(
           children: [
-            // 頂部區域
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
-              child: Row(
+            TeacherTabTopBar(
+              selectedClass: classProvider.selectedClass,
+              onClassSelected: (classId) async {
+                Provider.of<ClassProvider>(context, listen: false)
+                    .selectClassById(classId);
+              },
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  // 頭像和問候語
-                  Expanded(
-                    child: Row(
-                      children: [
-                        FutureBuilder<String>(
-                          future: user != null ? UserAnimalHelper.getUserAnimal(user.id) : Future.value(''),
-                          builder: (context, snapshot) {
-                            final animal = snapshot.data ?? (user != null ? UserAnimalHelper.getDefaultAnimal(user.id) : '');
-                            return CircleAvatar(
-                              radius: 28,
-                              backgroundColor: Colors.green.shade400,
-                              child: Text(
-                                animal,
-                                style: const TextStyle(
-                                  fontSize: 32,
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                        const SizedBox(width: 12),
-                        const Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                '儀錶板',
-                                style: TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF1F2937),
-                                ),
-                              ),
-                              Text(
-                                '追蹤進度',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
+                  IconButton(
+                    tooltip: '設定課程完成標準題數',
+                    icon: const Icon(Icons.tune),
+                    onPressed: () {
+                      _showCompletionTargetDialog(context);
+                    },
                   ),
-                  // 右側圖標
-                  Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.refresh),
-                        onPressed: () {
-                          _autoRefreshProvider.forceRefreshNow();
-                        },
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.emoji_events),
-                        onPressed: () {
-                          _showAwardBadgeDialog(context);
-                        },
-                      ),
-                      IconButton(
-                        tooltip: '設定課程完成標準題數',
-                        icon: const Icon(Icons.tune),
-                        onPressed: () {
-                          _showCompletionTargetDialog(context);
-                        },
-                      ),
-                      IconButton(
-                        tooltip: _isTopPanelCollapsed ? '展開篩選與資訊' : '收起篩選與資訊',
-                        icon: Icon(
-                          _isTopPanelCollapsed ? Icons.unfold_more : Icons.unfold_less,
-                        ),
-                        onPressed: () {
-                          setState(() {
-                            _isTopPanelCollapsed = !_isTopPanelCollapsed;
-                          });
-                        },
-                      ),
-                    ],
+                  IconButton(
+                    tooltip: _isTopPanelCollapsed ? '展開篩選與資訊' : '收起篩選與資訊',
+                    icon: Icon(
+                      _isTopPanelCollapsed ? Icons.unfold_more : Icons.unfold_less,
+                    ),
+                    onPressed: () {
+                      setState(() {
+                        _isTopPanelCollapsed = !_isTopPanelCollapsed;
+                      });
+                    },
                   ),
                 ],
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Selector<TeacherAutoRefreshProvider, int>(
-                selector: (_, provider) => provider.remainingSeconds,
-                builder: (context, value, _) {
-                  return Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      '下次自動刷新：$value 秒',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey[700],
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  );
-                },
-              ),
-            ),
-            const SizedBox(height: 8),
-            AnimatedCrossFade(
-              duration: const Duration(milliseconds: 220),
-              crossFadeState: _isTopPanelCollapsed
-                  ? CrossFadeState.showSecond
-                  : CrossFadeState.showFirst,
-              firstChild: Column(
-                children: [
-                  // 班級選擇器
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.05),
-                            blurRadius: 8,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(Icons.class_, color: Colors.indigo.shade600),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: DropdownButtonHideUnderline(
-                              child: DropdownButton<String>(
-                                value: _selectedClassId,
-                                hint: const Text('所有班級'),
-                                isExpanded: true,
-                                items: [
-                                  const DropdownMenuItem<String>(
-                                    value: null,
-                                    child: Text('所有班級'),
-                                  ),
-                                  ...classProvider.classes.map((classModel) => DropdownMenuItem<String>(
-                                    value: classModel.id,
-                                    child: Text(classModel.name),
-                                  )),
-                                ],
-                                onChanged: (value) {
-                                  setState(() {
-                                    _selectedClassId = value;
-                                  });
-                                  _loadStudentsProgress();
-                                },
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  // 統計卡片
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    child: Container(
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: Colors.amber.shade400,
-                        borderRadius: BorderRadius.circular(20),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.1),
-                            blurRadius: 10,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceAround,
-                        children: [
-                    Column(
-                      children: [
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.people,
-                              size: 24,
-                              color: Colors.grey[800],
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              '${_studentsProgress.length}',
-                              style: const TextStyle(
-                                fontSize: 32,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF1F2937),
-                              ),
-                            ),
-                          ],
-                        ),
-                        Text(
-                          '總學生數',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.grey[700],
-                          ),
-                        ),
-                      ],
-                    ),
-                    Container(
-                      width: 1,
-                      height: 40,
-                      color: Colors.grey[400],
-                    ),
-                    Column(
-                      children: [
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.warning_amber_rounded,
-                              size: 24,
-                              color: Colors.red,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              '${_studentsProgress.where((s) => _hasAlert(s)).length}',
-                              style: const TextStyle(
-                                fontSize: 32,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.red,
-                              ),
-                            ),
-                          ],
-                        ),
-                        Text(
-                          '需要關注',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.grey[700],
-                          ),
-                        ),
-                      ],
-                    ),
-                    Container(
-                      width: 1,
-                      height: 40,
-                      color: Colors.grey[400],
-                    ),
-                    Column(
-                      children: [
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.circle,
-                              size: 24,
-                              color: Colors.green,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              '${_studentsOnlineStatus.values.where((isOnline) => isOnline).length}',
-                              style: const TextStyle(
-                                fontSize: 32,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.green,
-                              ),
-                            ),
-                          ],
-                        ),
-                        Text(
-                          '登入中',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.grey[700],
-                          ),
-                        ),
-                      ],
-                    ),
-                    Container(
-                      width: 1,
-                      height: 40,
-                      color: Colors.grey[400],
-                    ),
-                    Column(
-                      children: [
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.check_circle,
-                              size: 24,
-                              color: Colors.green,
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              '${_studentsProgress.where((s) => s['is_overall_completed'] == true).length}',
-                              style: const TextStyle(
-                                fontSize: 32,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.green,
-                              ),
-                            ),
-                          ],
-                        ),
-                        Text(
-                          '已完成',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.grey[700],
-                          ),
-                        ),
-                      ],
-                    ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              secondChild: const SizedBox.shrink(),
-            ),
-            SizedBox(height: _isTopPanelCollapsed ? 8 : 24),
-            // 學生列表
             Expanded(
-              child: _isLoading
-                  ? const Center(
-                      child: _CuteLoadingIndicator(
-                        label: '整理資料中...',
-                      ),
-                    )
-                  : _studentsProgress.isEmpty
-                      ? Center(
+              child: RefreshIndicator(
+                onRefresh: _onPullRefresh,
+                child: CustomScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  slivers: [
+                    SliverToBoxAdapter(
+                      child: SizedBox(height: _isTopPanelCollapsed ? 8 : 8),
+                    ),
+                    if (!_isTopPanelCollapsed)
+                      SliverToBoxAdapter(child: _buildDashboardStatsCard()),
+                    if (!_isTopPanelCollapsed)
+                      const SliverToBoxAdapter(child: SizedBox(height: 16)),
+                    if (_isLoading)
+                      SliverFillRemaining(
+                        hasScrollBody: false,
+                        child: Center(
+                          child: _CuteLoadingIndicator(
+                            label: '整理資料中...',
+                          ),
+                        ),
+                      )
+                    else if (_studentsProgress.isEmpty)
+                      SliverFillRemaining(
+                        hasScrollBody: false,
+                        child: Center(
                           child: Text(
                             '尚無學生資料',
                             style: TextStyle(
@@ -1188,18 +1011,21 @@ class _DashboardTabState extends State<DashboardTab> {
                               color: Colors.grey[600],
                             ),
                           ),
-                        )
-                      : ListView.builder(
-                          padding: EdgeInsets.only(
-                            left: 20,
-                            right: 20,
-                            bottom: MediaQuery.of(context).padding.bottom + 100,
-                          ),
-                          itemCount: _studentsProgress.length,
-                          itemBuilder: (context, index) {
+                        ),
+                      )
+                    else
+                      SliverPadding(
+                        padding: EdgeInsets.only(
+                          left: 20,
+                          right: 20,
+                          bottom: MediaQuery.of(context).padding.bottom + 100,
+                        ),
+                        sliver: SliverList(
+                          delegate: SliverChildBuilderDelegate(
+                            (context, index) {
                             final student = _studentsProgress[index];
                             final hasAlert = _hasAlert(student);
-                            final isStuck = _isStuck(student);
+                            final isInactive = _isInactiveOverOneMinute(student);
                             final isOffline = _isOffline(student);
                             final stage = student['current_stage'] as int? ?? 1;
                             final avgStage = student['average_stage'] as double? ?? 1.0;
@@ -1209,25 +1035,17 @@ class _DashboardTabState extends State<DashboardTab> {
 
                             return InkWell(
                               onTap: () {
-                                _showStudentDetailDialog(context, student, stageColor, stageDistribution, completedStagesCount, avgStage, hasAlert, isStuck, isOffline);
+                                _showStudentDetailDialog(context, student, stageColor, stageDistribution, completedStagesCount, avgStage, hasAlert, isInactive, isOffline);
                               },
                               borderRadius: BorderRadius.circular(16),
                               child: Container(
                                 margin: const EdgeInsets.only(bottom: 16),
                                 padding: const EdgeInsets.all(20),
                                 decoration: BoxDecoration(
-                                  color: hasAlert ? Colors.red[50] : Colors.white,
+                                  color: hasAlert
+                                      ? const Color(0xFFFFEBEE)
+                                      : Colors.white.withValues(alpha: 0.82),
                                   borderRadius: BorderRadius.circular(16),
-                                  border: hasAlert
-                                      ? Border.all(color: Colors.red.shade300, width: 2)
-                                      : null,
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.05),
-                                      blurRadius: 8,
-                                      offset: const Offset(0, 2),
-                                    ),
-                                  ],
                                 ),
                                 child: Row(
                                 children: [
@@ -1437,19 +1255,17 @@ class _DashboardTabState extends State<DashboardTab> {
                                           Row(
                                             children: [
                                               Icon(
-                                                Icons.warning,
+                                                Icons.warning_amber_rounded,
                                                 size: 16,
-                                                color: Colors.red[600],
+                                                color: Colors.red.shade800,
                                               ),
                                               const SizedBox(width: 4),
                                               Expanded(
                                                 child: Text(
-                                                  isOffline
-                                                      ? '未登入'
-                                                      : '停留超過24小時',
+                                                  _alertReason(student),
                                                   style: TextStyle(
                                                     fontSize: 12,
-                                                    color: Colors.red[600],
+                                                    color: Colors.red.shade900,
                                                     fontWeight: FontWeight.w500,
                                                   ),
                                                   overflow: TextOverflow.ellipsis,
@@ -1472,229 +1288,83 @@ class _DashboardTabState extends State<DashboardTab> {
                               ),
                             ),
                             );
-                          },
+                            },
+                            childCount: _studentsProgress.length,
+                          ),
                         ),
-            ),
-          ],
-        ),
-        ),
-      ),
-    );
-  }
-
-  void _showAwardBadgeDialog(BuildContext context) {
-    final grammarTopicProvider = Provider.of<GrammarTopicProvider>(context, listen: false);
-    
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        String? selectedStudentId;
-        String? selectedGrammarTopicId;
-        String selectedMedalType = 'bronze';
-        
-        return StatefulBuilder(
-          builder: (context, setState) {
-            return AlertDialog(
-              title: const Row(
-                children: [
-                  Icon(Icons.emoji_events, color: Colors.amber),
-                  SizedBox(width: 8),
-                  Text('授予徽章'),
-                ],
-              ),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // 選擇課程
-                    const Text(
-                      '選擇課程',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                    ),
-                    const SizedBox(height: 8),
-                    DropdownButton<String>(
-                      isExpanded: true,
-                      value: selectedGrammarTopicId,
-                      hint: const Text('請選擇課程'),
-                      items: grammarTopicProvider.topics.map((topic) {
-                        return DropdownMenuItem<String>(
-                          value: topic.id,
-                          child: Text(topic.title),
-                        );
-                      }).toList(),
-                      onChanged: (value) {
-                        setState(() {
-                          selectedGrammarTopicId = value;
-                          selectedStudentId = null; // 重置學生選擇
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    // 選擇學生
-                    if (selectedGrammarTopicId != null) ...[
-                      const Text(
-                        '選擇學生',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                       ),
-                      const SizedBox(height: 8),
-                      DropdownButton<String>(
-                        isExpanded: true,
-                        value: selectedStudentId,
-                        hint: const Text('請選擇學生'),
-                        items: _studentsProgress.map((student) {
-                          return DropdownMenuItem<String>(
-                            value: student['student_id'] as String,
-                            child: Text(
-                              '${student['student_name'] ?? student['student_email'] ?? '學生'} (${student['student_id_number'] ?? ''})',
-                            ),
-                          );
-                        }).toList(),
-                        onChanged: (value) {
-                          setState(() {
-                            selectedStudentId = value;
-                          });
-                        },
-                      ),
-                      const SizedBox(height: 16),
-                    ],
-                    // 選擇獎牌類型
-                    if (selectedStudentId != null) ...[
-                      const Text(
-                        '選擇獎牌',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildMedalOption(
-                              'bronze',
-                              '銅牌',
-                              Colors.brown.shade400,
-                              selectedMedalType == 'bronze',
-                              () => setState(() => selectedMedalType = 'bronze'),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: _buildMedalOption(
-                              'silver',
-                              '銀牌',
-                              Colors.grey.shade400,
-                              selectedMedalType == 'silver',
-                              () => setState(() => selectedMedalType = 'silver'),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: _buildMedalOption(
-                              'gold',
-                              '金牌',
-                              Colors.amber.shade600,
-                              selectedMedalType == 'gold',
-                              () => setState(() => selectedMedalType = 'gold'),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
                   ],
                 ),
               ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('取消'),
-                ),
-                if (selectedStudentId != null && selectedGrammarTopicId != null)
-                  ElevatedButton(
-                    onPressed: () async {
-                      // 檢查是否已有徽章
-                      final hasBadge = await _supabaseService.hasBadgeForTopic(
-                        selectedStudentId!,
-                        selectedGrammarTopicId!,
-                      );
-                      
-                      if (hasBadge) {
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('該學生在此課程已有徽章，無法重複授予'),
-                              backgroundColor: Colors.orange,
-                            ),
-                          );
-                        }
-                        return;
-                      }
-                      
-                      try {
-                        await _awardBadge(
-                          selectedStudentId!,
-                          selectedGrammarTopicId!,
-                          selectedMedalType,
-                        );
-                        if (context.mounted) {
-                          Navigator.of(context).pop();
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('徽章授予成功'),
-                              backgroundColor: Colors.green,
-                            ),
-                          );
-                        }
-                      } catch (e) {
-                        print('Error awarding badge: $e');
-                        if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(ErrorHandler.getSafeErrorMessage(e)),
-                              backgroundColor: Colors.red,
-                            ),
-                          );
-                        }
-                      }
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.amber.shade600,
-                      foregroundColor: Colors.white,
-                    ),
-                    child: const Text('授予'),
-                  ),
-              ],
-            );
-          },
-        );
-      },
+            ),
+          ],
+        ),
+        ),
+      ),
     );
   }
 
-  Widget _buildMedalOption(String type, String name, Color color, bool isSelected, VoidCallback onTap) {
-    return InkWell(
-      onTap: onTap,
+  Widget _buildDashboardStatsCard() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Container(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
-          color: isSelected ? color.withOpacity(0.2) : Colors.grey.shade100,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: isSelected ? color : Colors.grey.shade300,
-            width: isSelected ? 2 : 1,
-          ),
+          color: Colors.green.withValues(alpha: 0.22),
+          borderRadius: BorderRadius.circular(20),
         ),
-        child: Column(
+        child: Row(
           children: [
-            Icon(
-              Icons.emoji_events,
-              color: color,
-              size: 32,
+            Expanded(
+              child: _buildDashboardStatCell(
+                count: _studentsProgress.length,
+                label: '總學生數',
+              ),
             ),
-            const SizedBox(height: 4),
-            Text(
-              name,
-              style: TextStyle(
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                color: isSelected ? color : Colors.grey[700],
+            _buildDashboardStatDivider(),
+            Expanded(
+              child: _buildDashboardStatCell(
+                count: _studentsProgress.where((s) => _hasAlert(s)).length,
+                label: '需要關注',
+                onTap: () {
+                  final list =
+                      _studentsProgress.where((s) => _hasAlert(s)).toList();
+                  _showStudentListDialog(
+                    title: '需要關注的學生',
+                    students: list,
+                    emptyMessage: '目前沒有需要關注的學生',
+                    subtitleFor: _alertReason,
+                  );
+                },
+              ),
+            ),
+            _buildDashboardStatDivider(),
+            Expanded(
+              child: _buildDashboardStatCell(
+                count: _studentsOnlineStatus.values
+                    .where((isOnline) => isOnline)
+                    .length,
+                label: '登入中',
+              ),
+            ),
+            _buildDashboardStatDivider(),
+            Expanded(
+              child: _buildDashboardStatCell(
+                count: _studentsProgress
+                    .where((s) => s['is_overall_completed'] == true)
+                    .length,
+                label: '已完成',
+                onTap: () {
+                  final list = _studentsProgress
+                      .where((s) => s['is_overall_completed'] == true)
+                      .toList();
+                  _showStudentListDialog(
+                    title: '已完成的學生',
+                    students: list,
+                    emptyMessage: '目前沒有已完成的學生',
+                    subtitleFor: _completionReason,
+                  );
+                },
               ),
             ),
           ],
@@ -1703,36 +1373,10 @@ class _DashboardTabState extends State<DashboardTab> {
     );
   }
 
-  Future<void> _awardBadge(String studentId, String grammarTopicId, String medalType) async {
-    final medalNames = {
-      'bronze': '銅牌',
-      'silver': '銀牌',
-      'gold': '金牌',
-    };
-    
-    final medalDescriptions = {
-      'bronze': '銅牌代表良好的學習表現，是對您努力的肯定。',
-      'silver': '銀牌代表優秀的學習成果，展現了您的持續進步。',
-      'gold': '金牌代表卓越的學習成就，是對您傑出表現的最高肯定。',
-    };
-
-    final badge = BadgeModel(
-      id: '',
-      studentId: studentId,
-      badgeType: medalType,
-      badgeName: medalNames[medalType] ?? medalType,
-      description: medalDescriptions[medalType] ?? '',
-      earnedAt: DateTime.now(),
-      grammarTopicId: grammarTopicId,
-    );
-
-    await _supabaseService.createBadge(badge);
-    
-    // 通知會通過 Realtime 自動發送到學生端，無需在此處發送
-  }
-
   Future<void> _showCompletionTargetDialog(BuildContext context) async {
-    if (_selectedClassId == null) {
+    final selectedClassId =
+        Provider.of<ClassProvider>(context, listen: false).selectedClass?.id;
+    if (selectedClassId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('請先選擇班級後再設定課程完成標準'),
@@ -1743,7 +1387,7 @@ class _DashboardTabState extends State<DashboardTab> {
     }
     final grammarTopicProvider =
         Provider.of<GrammarTopicProvider>(context, listen: false);
-    await grammarTopicProvider.loadTopics(classId: _selectedClassId);
+    await grammarTopicProvider.loadTopics(classId: selectedClassId);
     final topics = grammarTopicProvider.topics;
     if (topics.isEmpty) {
       if (!context.mounted) return;

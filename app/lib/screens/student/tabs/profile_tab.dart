@@ -17,6 +17,7 @@ import '../../report_bug_screen.dart';
 import '../../account_deletion_screen.dart';
 import '../../badges/badges_screen.dart';
 import '../../chat/teacher_student_chat_screen.dart';
+import '../../../widgets/ai_assistant_icon.dart';
 
 class ProfileTab extends StatefulWidget {
   const ProfileTab({super.key});
@@ -50,10 +51,9 @@ class _ProfileTabState extends State<ProfileTab> {
 
     if (user.role == 'teacher') {
       await classProvider.loadTeacherClasses(user.id);
-      if (classProvider.classes.isNotEmpty) {
-        final classId = classProvider.selectedClass?.id ?? classProvider.classes.first.id;
-        classProvider.selectClassById(classId);
-        await aiSettings.refreshForClass(classId);
+      final selected = classProvider.selectedClass;
+      if (selected != null) {
+        await aiSettings.refreshForClass(selected.id);
       }
       return;
     }
@@ -193,6 +193,7 @@ class _ProfileTabState extends State<ProfileTab> {
     final displayAnimal = _userAnimal ?? UserAnimalHelper.getDefaultAnimal(user.id);
 
     return SafeArea(
+      bottom: false,
       child: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
@@ -479,8 +480,8 @@ class _ProfileTabState extends State<ProfileTab> {
                                   const SizedBox(height: 4),
                                   Text(
                                     aiChatSettings.isEnabled
-                                        ? '老師已開啟，出題區會顯示 AI 聊天室按鈕'
-                                        : '老師已關閉，出題區不顯示 AI 聊天室按鈕',
+                                        ? '老師已開啟，您可使用 AI 小幫手'
+                                        : '老師已關閉，點擊時會提示功能已關閉',
                                     style: TextStyle(
                                       fontSize: 13,
                                       color: Colors.grey[600],
@@ -491,91 +492,6 @@ class _ProfileTabState extends State<ProfileTab> {
                             ),
                             const SizedBox(width: 12),
                             _buildAiChatReadonlyBadge(aiChatSettings),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 32),
-                    ],
-                    // AI 小幫手控制卡片（老師可設定）
-                    if (user.role == 'teacher') ...[
-                      Container(
-                        padding: const EdgeInsets.all(16),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(16),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.05),
-                              blurRadius: 8,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'AI 小幫手控制',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                                color: Color(0xFF1F2937),
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            if (classProvider.classes.isEmpty)
-                              const Text(
-                                '尚無班級可設定',
-                                style: TextStyle(fontSize: 13, color: Colors.grey),
-                              )
-                            else ...[
-                              DropdownButtonFormField<String>(
-                                value: aiChatSettings.boundClassId ??
-                                    classProvider.selectedClass?.id ??
-                                    classProvider.classes.first.id,
-                                decoration: const InputDecoration(
-                                  labelText: '設定班級',
-                                  border: OutlineInputBorder(),
-                                ),
-                                items: classProvider.classes
-                                    .map(
-                                      (c) => DropdownMenuItem<String>(
-                                        value: c.id,
-                                        child: Text(c.name),
-                                      ),
-                                    )
-                                    .toList(),
-                                onChanged: (value) async {
-                                  if (value == null) return;
-                                  classProvider.selectClassById(value);
-                                  await aiChatSettings.refreshForClass(value);
-                                },
-                              ),
-                              const SizedBox(height: 12),
-                              SwitchListTile(
-                                contentPadding: EdgeInsets.zero,
-                                title: const Text('允許學生開啟 AI 小幫手'),
-                                value: aiChatSettings.isEnabled,
-                                onChanged: aiChatSettings.isUpdating
-                                    ? null
-                                    : (value) async {
-                                        final classId = aiChatSettings.boundClassId ??
-                                            classProvider.selectedClass?.id ??
-                                            classProvider.classes.first.id;
-                                        final ok = await aiChatSettings.setEnabledForClass(
-                                          classId: classId,
-                                          enabled: value,
-                                        );
-                                        if (!context.mounted) return;
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          SnackBar(
-                                            content: Text(ok ? 'AI 小幫手設定已更新' : 'AI 小幫手設定更新失敗'),
-                                            backgroundColor: ok ? Colors.green : Colors.red,
-                                          ),
-                                        );
-                                      },
-                              ),
-                            ],
                           ],
                         ),
                       ),
@@ -1099,7 +1015,7 @@ class _ProfileTabState extends State<ProfileTab> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.chat_bubble_outline, size: 16),
+          const AiAssistantIcon(size: 16),
           const SizedBox(width: 6),
           Text(
             label,

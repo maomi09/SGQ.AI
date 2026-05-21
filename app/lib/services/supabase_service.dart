@@ -11,6 +11,7 @@ import '../models/badge_model.dart';
 import '../models/grammar_key_point_model.dart';
 import '../models/reminder_model.dart';
 import '../models/class_model.dart';
+import '../models/student_topic_usage_stats_model.dart';
 import '../config/app_config.dart';
 
 class SupabaseService {
@@ -1756,6 +1757,19 @@ class SupabaseService {
   }
 
   Future<void> updateQuestion(String id, Map<String, dynamic> updates) async {
+    String? grammarTopicIdForStats;
+    try {
+      final meta = await _client
+          .from('questions')
+          .select('grammar_topic_id, student_id')
+          .eq('id', id)
+          .maybeSingle();
+      if (meta != null &&
+          meta['student_id'] == _client.auth.currentUser?.id) {
+        grammarTopicIdForStats = meta['grammar_topic_id'] as String?;
+      }
+    } catch (_) {}
+
     // 確保 updated_at 欄位被更新
     final updateData = Map<String, dynamic>.from(updates);
     if (!updateData.containsKey('updated_at')) {
@@ -1772,6 +1786,14 @@ class SupabaseService {
           .single();
       
       print('Question updated successfully: id=${response['id']}, stage=${response['stage']}, updated_at=${response['updated_at']}');
+      if (grammarTopicIdForStats != null && grammarTopicIdForStats.isNotEmpty) {
+        try {
+          await incrementStudentTopicUsage(
+            grammarTopicId: grammarTopicIdForStats,
+            questionEditDelta: 1,
+          );
+        } catch (_) {}
+      }
     } catch (e) {
       // 如果使用 .single() 失敗（可能是因為 RLS 政策或行不存在），嘗試不使用 .single()
       print('Update with .single() failed, trying without .single(): $e');
@@ -1799,27 +1821,53 @@ class SupabaseService {
       throw Exception('Invalid stage: $stage');
     }
 
-    // 先獲取當前的 completed_stages
+    final now = DateTime.now();
     final questionResponse = await _client
         .from('questions')
-        .select('completed_stages')
+        .select('completed_stages, grammar_topic_id, created_at, student_id')
         .eq('id', questionId)
         .single();
 
-    final currentCompleted = questionResponse['completed_stages'] as Map<String, dynamic>? ?? {};
-    
-    // 添加當前階段的完成時間
-    final updatedCompleted = Map<String, dynamic>.from(currentCompleted);
-    updatedCompleted[stage.toString()] = DateTime.now().toIso8601String();
+    final currentCompleted =
+        questionResponse['completed_stages'] as Map<String, dynamic>? ?? {};
+    final grammarTopicId = questionResponse['grammar_topic_id'] as String?;
+    final createdAt = DateTime.parse(questionResponse['created_at'] as String);
 
-    // 更新資料庫
+    DateTime baseline = createdAt;
+    if (currentCompleted.isNotEmpty) {
+      DateTime? latest;
+      for (final value in currentCompleted.values) {
+        if (value is! String) continue;
+        final t = DateTime.tryParse(value);
+        if (t == null) continue;
+        if (latest == null || t.isAfter(latest)) latest = t;
+      }
+      if (latest != null) baseline = latest;
+    }
+    final completionSeconds = now.difference(baseline).inSeconds;
+
+    final updatedCompleted = Map<String, dynamic>.from(currentCompleted);
+    updatedCompleted[stage.toString()] = now.toIso8601String();
+
     await _client
         .from('questions')
         .update({
           'completed_stages': updatedCompleted,
-          'updated_at': DateTime.now().toIso8601String(),
+          'updated_at': now.toIso8601String(),
         })
         .eq('id', questionId);
+
+    if (grammarTopicId != null &&
+        grammarTopicId.isNotEmpty &&
+        questionResponse['student_id'] == _client.auth.currentUser?.id) {
+      try {
+        await incrementStudentTopicUsage(
+          grammarTopicId: grammarTopicId,
+          questionCompletionDelta: 1,
+          completionSecondsDelta: completionSeconds.clamp(0, 86400),
+        );
+      } catch (_) {}
+    }
   }
 
   // 檢查階段是否已完成
@@ -1899,6 +1947,180 @@ class SupabaseService {
     } catch (e) {
       print('Error checking badge: $e');
       return false;
+    }
+  }
+
+  /// 班級獎牌榜：該班學生獲得的徽章（含課程名稱）。
+  Future<List<Map<String, dynamic>>> getClassBadgeLeaderboard(String classId) async {
+    try {
+      final studentsResponse = await _client
+          .from('users')
+          .select('id, name, student_id')
+          .eq('class_id', classId)
+          .eq('role', 'student');
+
+      final students = (studentsResponse as List).cast<Map<String, dynamic>>();
+      if (students.isEmpty) return [];
+
+      final studentMap = <String, Map<String, dynamic>>{
+        for (final s in students) s['id'] as String: s,
+      };
+      final studentIds = studentMap.keys.toList();
+
+      final badgesResponse = await _client
+          .from('badges')
+          .select()
+          .inFilter('student_id', studentIds)
+          .order('earned_at', ascending: false);
+
+      final topicsResponse = await _client
+          .from('grammar_topics')
+          .select('id, title')
+          .eq('class_id', classId);
+      final topicMap = <String, String>{
+        for (final t in (topicsResponse as List).cast<Map<String, dynamic>>())
+          t['id'] as String: t['title'] as String? ?? '未知課程',
+      };
+
+      return (badgesResponse as List).map((raw) {
+        final badge = raw as Map<String, dynamic>;
+        final studentId = badge['student_id'] as String;
+        final student = studentMap[studentId];
+        final topicId = badge['grammar_topic_id'] as String?;
+        return {
+          'student_name': student?['name'] as String? ?? '',
+          'student_id_number': student?['student_id'] as String? ?? '',
+          'grammar_topic_title':
+              topicId != null ? (topicMap[topicId] ?? '未知課程') : '',
+          'badge_name': badge['badge_name'] as String? ?? '',
+          'badge_type': badge['badge_type'] as String? ?? '',
+          'earned_at': badge['earned_at'] as String? ?? '',
+        };
+      }).toList();
+    } catch (e) {
+      print('Error getting class badge leaderboard: $e');
+      return [];
+    }
+  }
+
+  /// 原子遞增學生分課程使用統計（需先執行 supabase_student_topic_usage_stats.sql）。
+  Future<void> incrementStudentTopicUsage({
+    required String grammarTopicId,
+    int loginDelta = 0,
+    int sessionMinutesDelta = 0,
+    int questionCompletionDelta = 0,
+    int completionSecondsDelta = 0,
+    int questionEditDelta = 0,
+    int grammarKeyPointViewDelta = 0,
+    int reminderViewDelta = 0,
+  }) async {
+    await _client.rpc('increment_student_topic_usage', params: {
+      'p_grammar_topic_id': grammarTopicId,
+      'p_login_delta': loginDelta,
+      'p_session_minutes_delta': sessionMinutesDelta,
+      'p_question_completion_delta': questionCompletionDelta,
+      'p_completion_seconds_delta': completionSecondsDelta,
+      'p_question_edit_delta': questionEditDelta,
+      'p_grammar_key_point_view_delta': grammarKeyPointViewDelta,
+      'p_reminder_view_delta': reminderViewDelta,
+    });
+  }
+
+  /// 老師端：取得班級內學生的分課程使用統計。
+  Future<Map<String, List<StudentTopicUsageStatsModel>>> getStudentTopicUsageStatsForClass({
+    String? classId,
+    List<String>? topicIds,
+  }) async {
+    try {
+      var studentsQuery = _client
+          .from('users')
+          .select('id, class_id')
+          .eq('role', 'student');
+      if (classId != null) {
+        studentsQuery = studentsQuery.eq('class_id', classId);
+      }
+      final studentsResponse = await studentsQuery;
+      final studentClassById = <String, String?>{};
+      final studentIds = <String>[];
+      for (final raw in studentsResponse as List) {
+        final row = raw as Map<String, dynamic>;
+        final id = row['id'] as String;
+        studentIds.add(id);
+        studentClassById[id] = row['class_id']?.toString();
+      }
+      if (studentIds.isEmpty) return {};
+
+      final allowedTopicIds = topicIds?.toSet();
+      final topicClassById = <String, String?>{};
+      if (allowedTopicIds != null && allowedTopicIds.isNotEmpty) {
+        final topicsResponse = await _client
+            .from('grammar_topics')
+            .select('id, class_id')
+            .inFilter('id', allowedTopicIds.toList());
+        for (final raw in topicsResponse as List) {
+          final row = raw as Map<String, dynamic>;
+          topicClassById[row['id'] as String] = row['class_id']?.toString();
+        }
+      }
+
+      final statsResponse = await _client
+          .from('student_topic_usage_stats')
+          .select()
+          .inFilter('student_id', studentIds);
+
+      final Map<String, Map<String, StudentTopicUsageStatsModel>> grouped = {};
+
+      for (final raw in statsResponse as List) {
+        final row = raw as Map<String, dynamic>;
+        final model = StudentTopicUsageStatsModel.fromJson(row);
+        if (allowedTopicIds != null &&
+            !allowedTopicIds.contains(model.grammarTopicId)) {
+          continue;
+        }
+        final studentClassId = studentClassById[model.studentId];
+        final topicClassId = topicClassById[model.grammarTopicId];
+        if (studentClassId != null &&
+            studentClassId.isNotEmpty &&
+            topicClassId != null &&
+            topicClassId.isNotEmpty &&
+            studentClassId != topicClassId) {
+          continue;
+        }
+        final byTopic = grouped.putIfAbsent(model.studentId, () => {});
+        final existing = byTopic[model.grammarTopicId];
+        if (existing == null) {
+          byTopic[model.grammarTopicId] = model;
+        } else {
+          byTopic[model.grammarTopicId] = StudentTopicUsageStatsModel(
+            studentId: model.studentId,
+            grammarTopicId: model.grammarTopicId,
+            questionCompletionCount: existing.questionCompletionCount +
+                model.questionCompletionCount,
+            totalQuestionCompletionSeconds:
+                existing.totalQuestionCompletionSeconds +
+                    model.totalQuestionCompletionSeconds,
+            questionEditCount:
+                existing.questionEditCount + model.questionEditCount,
+            loginCount: existing.loginCount + model.loginCount,
+            totalSessionMinutes:
+                existing.totalSessionMinutes + model.totalSessionMinutes,
+            grammarKeyPointViewCount: existing.grammarKeyPointViewCount +
+                model.grammarKeyPointViewCount,
+            reminderViewCount:
+                existing.reminderViewCount + model.reminderViewCount,
+            updatedAt: _laterUpdatedAt(existing.updatedAt, model.updatedAt),
+          );
+        }
+      }
+
+      return {
+        for (final entry in grouped.entries)
+          entry.key: entry.value.values.toList()
+            ..sort((a, b) => a.grammarTopicId.compareTo(b.grammarTopicId)),
+      };
+    } catch (e) {
+      print('Error getting student topic usage stats: $e');
+      return {};
     }
   }
 
@@ -2011,6 +2233,7 @@ class SupabaseService {
               'student_name': student['name'] as String? ?? '',
               'student_email': student['email'] as String? ?? '',
               'student_id_number': student['student_id'] as String? ?? '',
+              'class_id': student['class_id']?.toString(),
               'last_login_at': latestSessionSignals[studentId]?.toIso8601String(),
               'current_stage': currentStage,
               'last_activity': lastActivity,
@@ -2115,6 +2338,7 @@ class SupabaseService {
           'student_name': student['name'] as String? ?? '',
           'student_email': student['email'] as String? ?? '',
           'student_id_number': student['student_id'] as String? ?? '',
+          'class_id': student['class_id']?.toString(),
           'last_login_at': latestSessionSignals[studentId]?.toIso8601String(),
           'current_stage': currentStage,
           'last_activity': lastActivity,
@@ -2397,7 +2621,7 @@ class SupabaseService {
   // Session Management - 創建新的 session
   Future<String?> createSession(String studentId) async {
     try {
-      final nowIso = DateTime.now().toIso8601String();
+      final nowIso = DateTime.now().toUtc().toIso8601String();
       final response = await _client
           .from('user_sessions')
           .insert({
@@ -2427,7 +2651,7 @@ class SupabaseService {
     try {
       final response = await _client
           .from('user_sessions')
-          .update({'last_heartbeat': heartbeatTime.toIso8601String()})
+          .update({'last_heartbeat': heartbeatTime.toUtc().toIso8601String()})
           .eq('id', sessionId)
           .isFilter('end_time', null)
           .select('id');
@@ -2448,7 +2672,7 @@ class SupabaseService {
       await _client
           .from('user_sessions')
           .update({
-            'end_time': (endTime ?? DateTime.now()).toIso8601String(),
+            'end_time': (endTime ?? DateTime.now()).toUtc().toIso8601String(),
           })
           .eq('id', sessionId)
           .isFilter('end_time', null);
@@ -2504,7 +2728,7 @@ class SupabaseService {
       await _client
           .from('user_sessions')
           .update({
-            'end_time': (endTime ?? DateTime.now()).toIso8601String(),
+            'end_time': (endTime ?? DateTime.now()).toUtc().toIso8601String(),
           })
           .eq('student_id', studentId)
           .isFilter('end_time', null);
@@ -2532,6 +2756,10 @@ class SupabaseService {
             ? DateTime.parse(heartbeatStr)
             : startTime;
         final now = DateTime.now();
+        // 防呆：若時間戳比現在晚太多（時區/資料異常），視為離線
+        if (signalTime.isAfter(now.add(const Duration(seconds: 15)))) {
+          return false;
+        }
         final difference = now.difference(signalTime);
         
         // 心跳每 10 秒一次；容忍 30 秒，避免關閉 App 後長時間誤判上線中
@@ -2580,6 +2808,10 @@ class SupabaseService {
       for (var studentId in studentIds) {
         if (latestSignals.containsKey(studentId)) {
           final signalTime = latestSignals[studentId]!;
+          if (signalTime.isAfter(now.add(const Duration(seconds: 15)))) {
+            statusMap[studentId] = false;
+            continue;
+          }
           final difference = now.difference(signalTime);
           // 心跳每 10 秒一次；容忍 30 秒，讓關閉 App 後更快顯示離線
           statusMap[studentId] = difference.inSeconds < 30;
@@ -3255,6 +3487,12 @@ class SupabaseService {
       print('Error getting resolved student-topic keys: $e');
       return {};
     }
+  }
+
+  DateTime? _laterUpdatedAt(DateTime? a, DateTime? b) {
+    if (a == null) return b;
+    if (b == null) return a;
+    return a.isAfter(b) ? a : b;
   }
 }
 

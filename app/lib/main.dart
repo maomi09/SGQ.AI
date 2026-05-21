@@ -18,6 +18,7 @@ import 'screens/auth/forgot_password_screen.dart';
 import 'screens/auth/reset_password_screen.dart';
 import 'screens/student/student_main_screen.dart';
 import 'screens/teacher/teacher_main_screen.dart';
+import 'widgets/sgq_auth_bootstrap_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -151,14 +152,18 @@ class AuthWrapper extends StatefulWidget {
 
 class _AuthWrapperState extends State<AuthWrapper> {
   late StreamSubscription<AuthState> _authStateSubscription;
+  late final DateTime _bootstrapStartedAt;
+  static const Duration _bootstrapMinDuration = Duration(milliseconds: 900);
+
+  bool get _bootstrapMinElapsed =>
+      DateTime.now().difference(_bootstrapStartedAt) >= _bootstrapMinDuration;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      Provider.of<AuthProvider>(context, listen: false).checkAuth();
-    });
-    
+    _bootstrapStartedAt = DateTime.now();
+    _resolveInitialAuth();
+
     // 監聽 Supabase 認證狀態變化（用於 Google 登入回調和重設密碼）
     _authStateSubscription = Supabase.instance.client.auth.onAuthStateChange.listen((data) {
       final event = data.event;
@@ -217,21 +222,31 @@ class _AuthWrapperState extends State<AuthWrapper> {
       }
     });
     
-    // 處理應用程式啟動時的深度連結
-    _handleInitialLink();
+    // 處理應用程式啟動時的深度連結（延後執行，避免與初次 checkAuth 搶畫面）
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (mounted) _handleInitialLink();
+    });
+  }
+
+  Future<void> _resolveInitialAuth() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    await authProvider.checkAuth();
+    final elapsed = DateTime.now().difference(_bootstrapStartedAt);
+    if (elapsed < _bootstrapMinDuration) {
+      await Future.delayed(_bootstrapMinDuration - elapsed);
+    }
+    if (mounted) setState(() {});
   }
 
   Future<void> _handleInitialLink() async {
-    // 等待一下讓深度連結處理完成
-    await Future.delayed(const Duration(milliseconds: 500));
-    
-    // 檢查是否有待處理的認證會話
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    if (!authProvider.hasResolvedInitialAuth) return;
+
     final session = Supabase.instance.client.auth.currentSession;
-    if (session != null) {
+    if (session != null &&
+        (!authProvider.isAuthenticated || authProvider.currentUser == null)) {
       print('Found existing session in initial link handler, checking auth...');
-      await Provider.of<AuthProvider>(context, listen: false).checkAuth();
-    } else {
-      print('No session found in initial link handler');
+      await authProvider.checkAuth();
     }
   }
 
@@ -245,26 +260,31 @@ class _AuthWrapperState extends State<AuthWrapper> {
   Widget build(BuildContext context) {
     return Consumer<AuthProvider>(
       builder: (context, authProvider, child) {
-        // 檢查認證狀態
-        // 注意：不要在發送驗證碼時顯示載入畫面，避免跳轉
-        
-        // 如果有有效的 Supabase session 但 AuthProvider 還沒有用戶資料，先檢查認證
+        // 初次啟動：等 checkAuth 完成且過場至少顯示一段時間（含未登入）
+        if (!authProvider.hasResolvedInitialAuth || !_bootstrapMinElapsed) {
+          return const SgqAuthBootstrapScreen();
+        }
+
+        // 登入流程中（例如發送驗證碼）維持登入頁，不蓋成全螢幕載入
+        if (authProvider.isLoading &&
+            !authProvider.isAuthenticated &&
+            authProvider.currentUser == null) {
+          return const LoginScreen();
+        }
+
         final supabaseSession = Supabase.instance.client.auth.currentSession;
-        if (supabaseSession != null && 
+        if (supabaseSession != null &&
             (!authProvider.isAuthenticated || authProvider.currentUser == null) &&
             !authProvider.isLoading) {
-          // 在下一幀檢查認證，避免在 build 期間觸發異步操作
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (mounted) {
-              print('Supabase session exists but AuthProvider has no user, checking auth...');
               authProvider.checkAuth();
             }
           });
+          return const SgqAuthBootstrapScreen();
         }
-        
+
         if (!authProvider.isAuthenticated || authProvider.currentUser == null) {
-          // 只有在非載入狀態或載入完成後才顯示登入頁面
-          // 這可以避免在發送驗證碼時觸發跳轉
           return const LoginScreen();
         }
 

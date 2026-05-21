@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/supabase_service.dart';
 import '../../utils/error_handler.dart';
+import '../../widgets/ai_chat_pastel_background.dart';
 
 class TeacherStudentChatScreen extends StatefulWidget {
   const TeacherStudentChatScreen({super.key});
@@ -15,6 +16,9 @@ class TeacherStudentChatScreen extends StatefulWidget {
 }
 
 class _TeacherStudentChatScreenState extends State<TeacherStudentChatScreen> {
+  /// 底部輸入列佔用高度（含留白），供訊息列表避開重疊。
+  static const double _messageInputBarExtent = 76;
+
   final SupabaseService _supabaseService = SupabaseService();
   final TextEditingController _messageController = TextEditingController();
   final TextEditingController _searchController = TextEditingController();
@@ -32,6 +36,7 @@ class _TeacherStudentChatScreenState extends State<TeacherStudentChatScreen> {
   bool _isSilentRefreshing = false;
   final Map<String, DateTime> _lastReadAtByStudent = {};
   static const String _teacherReadAtStoragePrefix = 'teacher_chat_last_read_at_';
+  static const double _nearBottomThreshold = 120;
 
   @override
   void initState() {
@@ -47,6 +52,26 @@ class _TeacherStudentChatScreenState extends State<TeacherStudentChatScreen> {
     _searchController.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  bool _isNearBottom() {
+    if (!_scrollController.hasClients) return true;
+    final position = _scrollController.position;
+    if (position.maxScrollExtent <= 0) return true;
+    return position.maxScrollExtent - position.pixels <= _nearBottomThreshold;
+  }
+
+  bool _sameMessages(
+    List<Map<String, dynamic>> a,
+    List<Map<String, dynamic>> b,
+  ) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i]['id']?.toString() != b[i]['id']?.toString()) {
+        return false;
+      }
+    }
+    return true;
   }
 
   Future<void> _initialize() async {
@@ -121,13 +146,36 @@ class _TeacherStudentChatScreenState extends State<TeacherStudentChatScreen> {
         studentId: _selectedStudentId!,
       );
       if (!mounted) return;
+
+      if (silent && _sameMessages(_messages, messages)) {
+        return;
+      }
+
+      final wasNearBottom = _isNearBottom();
+      final hadMoreMessages = messages.length > _messages.length;
+      final savedOffset =
+          silent && _scrollController.hasClients ? _scrollController.offset : null;
+
       setState(() {
         _messages = messages;
         if (!silent) {
           _isLoading = false;
         }
       });
-      _scrollToBottom();
+
+      if (!silent) {
+        _scrollToBottom(force: true);
+      } else {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!_scrollController.hasClients) return;
+          if (wasNearBottom && hadMoreMessages) {
+            _scrollToBottom(force: true);
+          } else if (savedOffset != null) {
+            final maxExtent = _scrollController.position.maxScrollExtent;
+            _scrollController.jumpTo(savedOffset.clamp(0.0, maxExtent));
+          }
+        });
+      }
     } catch (e) {
       if (!mounted) return;
       if (!silent) {
@@ -192,10 +240,11 @@ class _TeacherStudentChatScreenState extends State<TeacherStudentChatScreen> {
           'created_at': DateTime.now().toIso8601String(),
         });
       });
-      _scrollToBottom();
+      _scrollToBottom(force: true);
       if (rawText.isNotEmpty) {
         _messageController.clear();
       }
+      FocusScope.of(context).unfocus();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -288,7 +337,7 @@ class _TeacherStudentChatScreenState extends State<TeacherStudentChatScreen> {
           'created_at': DateTime.now().toIso8601String(),
         });
       });
-      _scrollToBottom();
+      _scrollToBottom(force: true);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('已送出題目給老師審閱')),
       );
@@ -434,12 +483,68 @@ class _TeacherStudentChatScreenState extends State<TeacherStudentChatScreen> {
   String _formatTaipeiTime(String? raw, {bool short = false}) {
     final taipei = _toTaipeiTime(_parseServerTime(raw));
     if (taipei == null) return '';
-    final month = taipei.month.toString().padLeft(2, '0');
-    final day = taipei.day.toString().padLeft(2, '0');
     final hour = taipei.hour.toString().padLeft(2, '0');
     final minute = taipei.minute.toString().padLeft(2, '0');
     if (short) return '$hour:$minute';
+    final month = taipei.month.toString().padLeft(2, '0');
+    final day = taipei.day.toString().padLeft(2, '0');
     return '$month/$day $hour:$minute';
+  }
+
+  String _formatTaipeiDateLabel(DateTime day) {
+    final now = _toTaipeiTime(DateTime.now().toUtc());
+    if (now != null) {
+      final today = DateTime(now.year, now.month, now.day);
+      final yesterday = today.subtract(const Duration(days: 1));
+      if (day == today) return '今天';
+      if (day == yesterday) return '昨天';
+    }
+    final month = day.month.toString().padLeft(2, '0');
+    final dayStr = day.day.toString().padLeft(2, '0');
+    return '${day.year}/$month/$dayStr';
+  }
+
+  List<_TeacherStudentChatListItem> _buildMessageListItems() {
+    final items = <_TeacherStudentChatListItem>[];
+    DateTime? lastDay;
+    for (final msg in _messages) {
+      final taipei = _toTaipeiTime(_parseServerTime(msg['created_at']?.toString()));
+      if (taipei != null) {
+        final day = DateTime(taipei.year, taipei.month, taipei.day);
+        if (lastDay == null || day != lastDay) {
+          items.add(_TeacherStudentChatListItem.date(_formatTaipeiDateLabel(day)));
+          lastDay = day;
+        }
+      }
+      items.add(_TeacherStudentChatListItem.message(msg));
+    }
+    return items;
+  }
+
+  Widget _buildDateDivider(String label) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.55),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.75),
+            ),
+          ),
+          child: Text(
+            label,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: TeacherStudentChatTheme.textSecondary,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   void _markCurrentChatAsRead() {
@@ -506,7 +611,8 @@ class _TeacherStudentChatScreenState extends State<TeacherStudentChatScreen> {
     await prefs.setStringList(key, payload);
   }
 
-  void _scrollToBottom() {
+  void _scrollToBottom({bool force = false}) {
+    if (!force && !_isNearBottom()) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
@@ -532,8 +638,20 @@ class _TeacherStudentChatScreenState extends State<TeacherStudentChatScreen> {
     final selectedStudentName = selectedSummary?['student_name']?.toString() ?? '';
     final selectedClassName = selectedSummary?['class_name']?.toString() ?? '';
 
+    final viewBottom = MediaQuery.viewInsetsOf(context).bottom;
+    final messageListBottomPadding =
+        12.0 + (inConversation ? _messageInputBarExtent + viewBottom : 0.0);
+    final messageListItems =
+        inConversation ? _buildMessageListItems() : const <_TeacherStudentChatListItem>[];
+
     return Scaffold(
+      resizeToAvoidBottomInset: false,
+      backgroundColor: TeacherStudentChatTheme.palette.gradientEnd,
       appBar: AppBar(
+        backgroundColor: Colors.white.withValues(alpha: 0.72),
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        foregroundColor: TeacherStudentChatTheme.textPrimary,
         leading: isTeacher && inConversation
             ? IconButton(
                 icon: const Icon(Icons.arrow_back),
@@ -548,152 +666,226 @@ class _TeacherStudentChatScreenState extends State<TeacherStudentChatScreen> {
                       : '聊天室 - $selectedStudentName${selectedClassName.isNotEmpty ? '（$selectedClassName）' : ''}')
                   : '學生聊天室列表')
               : '向老師提問',
+          style: const TextStyle(
+            fontWeight: FontWeight.w600,
+            letterSpacing: -0.2,
+          ),
         ),
       ),
-      body: Column(
+      body: Stack(
+        fit: StackFit.expand,
         children: [
-          if (isTeacher && !inConversation)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-              child: TextField(
-                controller: _searchController,
-                onChanged: _applySearch,
-                decoration: const InputDecoration(
-                  hintText: '搜尋學生姓名或訊息',
-                  prefixIcon: Icon(Icons.search),
-                  border: OutlineInputBorder(),
+          const ChatPastelBackground(palette: ChatPastelPalette.teacherStudent),
+          Column(
+            children: [
+              if (isTeacher && !inConversation)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+                  child: TextField(
+                    controller: _searchController,
+                    onChanged: _applySearch,
+                    style: const TextStyle(color: TeacherStudentChatTheme.textPrimary),
+                    decoration: InputDecoration(
+                      hintText: '搜尋學生姓名或訊息',
+                      hintStyle: TextStyle(color: Colors.grey.shade400),
+                      prefixIcon: Icon(
+                        Icons.search,
+                        color: TeacherStudentChatTheme.accent,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius:
+                            BorderRadius.circular(TeacherStudentChatTheme.radiusPill),
+                        borderSide: BorderSide.none,
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius:
+                            BorderRadius.circular(TeacherStudentChatTheme.radiusPill),
+                        borderSide: BorderSide.none,
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius:
+                            BorderRadius.circular(TeacherStudentChatTheme.radiusPill),
+                        borderSide: BorderSide(
+                          color: TeacherStudentChatTheme.accent.withValues(alpha: 0.35),
+                          width: 1.5,
+                        ),
+                      ),
+                      filled: true,
+                      fillColor: Colors.white,
+                      contentPadding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                  ),
                 ),
-              ),
-            ),
-          Expanded(
-            child: isTeacher && !inConversation
-                ? _buildConversationList()
-                : (_isLoading
-                    ? const Center(child: CircularProgressIndicator())
-                    : _messages.isEmpty
-                        ? const Center(child: Text('目前沒有訊息'))
-                        : ListView.builder(
-                        controller: _scrollController,
-                        padding: const EdgeInsets.all(12),
-                        itemCount: _messages.length,
-                        itemBuilder: (context, index) {
-                          final msg = _messages[index];
-                          final mine = msg['sender_id'] == user?.id;
-                          final role = msg['sender_role'] as String? ?? '';
-                          final content = msg['content'] as String? ?? '';
-                          final isHandRaise = msg['is_hand_raise'] == true;
-                          final timeText = _formatTaipeiTime(
-                            msg['created_at']?.toString(),
-                            short: false,
-                          );
-                          return LayoutBuilder(
-                            builder: (context, constraints) {
-                              final maxBubbleWidth = constraints.maxWidth * 0.72;
-                              final estimatedWidth =
-                                  (content.length * 16.0 + 72.0).clamp(92.0, maxBubbleWidth);
-                              return Align(
-                                alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
-                                child: Container(
-                                  width: estimatedWidth,
-                                  margin: const EdgeInsets.only(bottom: 8),
-                                  padding: const EdgeInsets.all(10),
-                                  decoration: BoxDecoration(
-                                    color: mine ? Colors.green.shade100 : Colors.grey.shade200,
-                                    borderRadius: BorderRadius.circular(10),
-                                    border: isHandRaise ? Border.all(color: Colors.orange, width: 1.2) : null,
-                                  ),
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        isHandRaise ? '舉手提問 - $role' : role,
-                                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        content,
-                                        softWrap: true,
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Align(
-                                        alignment: Alignment.centerRight,
-                                        child: Text(
-                                          timeText,
-                                          style: TextStyle(
-                                            fontSize: 11,
-                                            color: Colors.grey.shade600,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
+              Expanded(
+                child: isTeacher && !inConversation
+                    ? _buildConversationList()
+                    : (_isLoading
+                        ? Center(
+                            child: CircularProgressIndicator(
+                              color: TeacherStudentChatTheme.accent,
+                            ),
+                          )
+                        : _messages.isEmpty
+                            ? const Center(
+                                child: Text(
+                                  '目前沒有訊息',
+                                  style: TextStyle(
+                                    color: TeacherStudentChatTheme.textSecondary,
                                   ),
                                 ),
-                              );
-                            },
-                          );
-                        },
-                      )),
+                              )
+                            : ListView.builder(
+                                controller: _scrollController,
+                                padding: EdgeInsets.fromLTRB(
+                                  12,
+                                  12,
+                                  12,
+                                  messageListBottomPadding,
+                                ),
+                                itemCount: messageListItems.length,
+                                itemBuilder: (context, index) {
+                                  final item = messageListItems[index];
+                                  if (item.isDateDivider) {
+                                    return _buildDateDivider(item.dateLabel!);
+                                  }
+                                  final msg = item.message!;
+                                  final mine = msg['sender_id'] == user?.id;
+                                  final role = msg['sender_role'] as String? ?? '';
+                                  final content = msg['content'] as String? ?? '';
+                                  final isHandRaise = msg['is_hand_raise'] == true;
+                                  final timeText = _formatTaipeiTime(
+                                    msg['created_at']?.toString(),
+                                    short: true,
+                                  );
+                                  return LayoutBuilder(
+                                    builder: (context, constraints) {
+                                      final maxBubbleWidth =
+                                          constraints.maxWidth * 0.72;
+                                      final estimatedWidth = (content.length *
+                                                  16.0 +
+                                              72.0)
+                                          .clamp(92.0, maxBubbleWidth);
+                                      return Align(
+                                        alignment: mine
+                                            ? Alignment.centerRight
+                                            : Alignment.centerLeft,
+                                        child: TeacherStudentChatTheme.messageBubble(
+                                          isUser: mine,
+                                          width: estimatedWidth,
+                                          border: isHandRaise
+                                              ? Border.all(
+                                                  color: Colors.orange.shade400,
+                                                  width: 1.2,
+                                                )
+                                              : null,
+                                          child: Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                isHandRaise
+                                                    ? '舉手提問 - $role'
+                                                    : role,
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: mine
+                                                      ? TeacherStudentChatTheme.accent
+                                                      : TeacherStudentChatTheme
+                                                          .textSecondary,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                content,
+                                                softWrap: true,
+                                                style: const TextStyle(
+                                                  fontSize: 14,
+                                                  height: 1.45,
+                                                  color: TeacherStudentChatTheme
+                                                      .textPrimary,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 4),
+                                              Align(
+                                                alignment: Alignment.centerRight,
+                                                child: Text(
+                                                  timeText,
+                                                  style: const TextStyle(
+                                                    fontSize: 11,
+                                                    color: TeacherStudentChatTheme
+                                                        .textSecondary,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  );
+                                },
+                              )),
+              ),
+            ],
           ),
           if (inConversation)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 18),
-              child: Row(
-                children: [
-                  if (!isTeacher) ...[
-                    IconButton(
-                      onPressed: _isSending ? null : _sendQuestionForReview,
-                      icon: const Icon(Icons.assignment_outlined),
-                      tooltip: '選擇題目送審',
-                      style: IconButton.styleFrom(
-                        backgroundColor: Colors.blue.shade50,
-                        padding: const EdgeInsets.all(10),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: viewBottom,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    if (!isTeacher) ...[
+                      ChatUiTheme.circleIconButton(
+                        icon: Icons.assignment_outlined,
+                        accent: TeacherStudentChatTheme.accent,
+                        tooltip: '選擇題目送審',
+                        onPressed:
+                            _isSending ? null : _sendQuestionForReview,
+                      ),
+                      const SizedBox(width: 6),
+                    ],
+                    Expanded(
+                      child: TextField(
+                        controller: _messageController,
+                        style: const TextStyle(
+                          color: TeacherStudentChatTheme.textPrimary,
+                        ),
+                        decoration: ChatUiTheme.pillInputDecoration(
+                          hintText: '輸入訊息',
+                          accent: TeacherStudentChatTheme.accent,
+                        ),
+                        minLines: 1,
+                        maxLines: 3,
+                        scrollPadding: EdgeInsets.zero,
                       ),
                     ),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 8),
+                    if (!isTeacher)
+                      ChatUiTheme.circleIconButton(
+                        icon: Icons.pan_tool_alt_outlined,
+                        accent: TeacherStudentChatTheme.accent,
+                        tooltip: '舉手提問',
+                        onPressed: _isSending
+                            ? null
+                            : () => _sendMessage(isHandRaise: true),
+                      ),
+                    if (!isTeacher) const SizedBox(width: 8),
+                    ChatUiTheme.circleIconButton(
+                      icon: Icons.arrow_upward_rounded,
+                      accent: TeacherStudentChatTheme.accent,
+                      tooltip: '送出',
+                      onPressed: _isSending
+                          ? null
+                          : () => _sendMessage(isHandRaise: false),
+                    ),
                   ],
-                  Expanded(
-                    child: TextField(
-                      controller: _messageController,
-                      decoration: InputDecoration(
-                        hintText: '輸入訊息',
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(24),
-                          borderSide: BorderSide(color: Colors.grey.shade300),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(24),
-                          borderSide: BorderSide(color: Colors.grey.shade300),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(24),
-                          borderSide: BorderSide(color: Colors.green.shade400, width: 1.5),
-                        ),
-                        filled: true,
-                        fillColor: Colors.white,
-                      ),
-                      minLines: 1,
-                      maxLines: 3,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  if (!isTeacher)
-                    IconButton(
-                      onPressed: _isSending ? null : () => _sendMessage(isHandRaise: true),
-                      icon: const Icon(Icons.pan_tool_alt_outlined),
-                      tooltip: '舉手提問',
-                    ),
-                  IconButton(
-                    onPressed: _isSending ? null : () => _sendMessage(isHandRaise: false),
-                    icon: const Icon(Icons.send),
-                    tooltip: '送出',
-                    style: IconButton.styleFrom(
-                      backgroundColor: Colors.green.shade50,
-                      padding: const EdgeInsets.all(12),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
         ],
@@ -703,10 +895,17 @@ class _TeacherStudentChatScreenState extends State<TeacherStudentChatScreen> {
 
   Widget _buildConversationList() {
     if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return Center(
+        child: CircularProgressIndicator(color: TeacherStudentChatTheme.accent),
+      );
     }
     if (_filteredSummaries.isEmpty) {
-      return const Center(child: Text('找不到符合條件的學生'));
+      return const Center(
+        child: Text(
+          '找不到符合條件的學生',
+          style: TextStyle(color: TeacherStudentChatTheme.textSecondary),
+        ),
+      );
     }
     final activeHandRaises = _filteredSummaries.where((item) {
       final latestSenderRole = item['latest_sender_role'] as String? ?? '';
@@ -760,22 +959,40 @@ class _TeacherStudentChatScreenState extends State<TeacherStudentChatScreen> {
         final subtitle = preview.isEmpty ? '班級：$className' : '班級：$className  ｜  $preview';
         final timeText = createdAt == null ? '' : _formatTaipeiTime(item['latest_created_at']?.toString());
 
-        return Card(
+        return Container(
           margin: const EdgeInsets.only(bottom: 8),
+          decoration: ChatUiTheme.listCardDecoration(),
           child: ListTile(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
             onTap: () => _openStudentChat(item['student_id'] as String),
             leading: CircleAvatar(
-              backgroundColor: hasHandRaise ? Colors.orange.shade100 : Colors.blue.shade100,
+              backgroundColor: hasHandRaise
+                  ? Colors.orange.shade100
+                  : TeacherStudentChatTheme.accentSoft.withValues(alpha: 0.45),
               child: Icon(
                 hasHandRaise ? Icons.pan_tool_alt_outlined : Icons.person_outline,
-                color: hasHandRaise ? Colors.orange.shade700 : Colors.blue.shade700,
+                color: hasHandRaise
+                    ? Colors.orange.shade700
+                    : TeacherStudentChatTheme.accent,
               ),
             ),
-            title: Text(name),
+            title: Text(
+              name,
+              style: const TextStyle(
+                fontWeight: FontWeight.w600,
+                color: TeacherStudentChatTheme.textPrimary,
+              ),
+            ),
             subtitle: Text(
               subtitle,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: TeacherStudentChatTheme.textSecondary,
+                fontSize: 13,
+              ),
             ),
             trailing: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -783,7 +1000,10 @@ class _TeacherStudentChatScreenState extends State<TeacherStudentChatScreen> {
               children: [
                 Text(
                   timeText,
-                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: TeacherStudentChatTheme.textSecondary,
+                  ),
                 ),
                 const SizedBox(height: 6),
                 if (hasUnread)
@@ -809,4 +1029,15 @@ class _TeacherStudentChatScreenState extends State<TeacherStudentChatScreen> {
       },
     );
   }
+}
+
+class _TeacherStudentChatListItem {
+  const _TeacherStudentChatListItem.date(this.dateLabel) : message = null;
+
+  const _TeacherStudentChatListItem.message(this.message) : dateLabel = null;
+
+  final String? dateLabel;
+  final Map<String, dynamic>? message;
+
+  bool get isDateDivider => dateLabel != null;
 }

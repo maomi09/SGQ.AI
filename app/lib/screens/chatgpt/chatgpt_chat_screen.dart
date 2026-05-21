@@ -6,6 +6,9 @@ import '../../providers/chat_provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/ai_chat_settings_provider.dart';
 import '../../services/chatgpt_service.dart';
+import '../../widgets/adaptive_app_dialog.dart';
+import '../../widgets/ai_assistant_icon.dart';
+import '../../widgets/ai_chat_pastel_background.dart';
 import '../../services/supabase_service.dart';
 import '../../models/question_model.dart';
 import '../../utils/error_handler.dart';
@@ -19,6 +22,9 @@ class ChatGPTChatScreen extends StatefulWidget {
 }
 
 class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
+  /// 底部輸入列佔用高度（含上下留白），供訊息列表避開重疊。
+  static const double _messageInputBarExtent = 72;
+
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final SupabaseService _supabaseService = SupabaseService();
@@ -33,13 +39,21 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
 
   bool _hasCheckedQuestion = false;
   bool _hasCheckedDataSharingConsent = false;
+  /// 各階段已顯示過的訊息數，用於僅對新訊息播放氣泡動畫。
+  final Map<int, int> _seenMessageCountByStage = {};
   
   @override
   void initState() {
     super.initState();
     _loadShownInfoDialogQuestions();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && !_hasCheckedQuestion) {
+      if (!mounted) return;
+      // 同次 App 生命週期內再次開啟：先隱藏題目列表，避免閃一下再切回聊天
+      final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+      if (chatProvider.currentQuestionId != null) {
+        setState(() => _showQuestionSelector = false);
+      }
+      if (!_hasCheckedQuestion) {
         _hasCheckedQuestion = true;
         _checkDataSharingConsent();
       }
@@ -398,17 +412,13 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
     // 只有在 ChatProvider 中已經有選中的題目時才自動載入
     // 不要自動選擇第一個題目
     if (chatProvider.currentQuestionId != null && studentId != null) {
-      // 嘗試找到對應的題目
       try {
         final selectedQuestion = questions.firstWhere(
           (q) => q.id == chatProvider.currentQuestionId,
         );
         print('Found previously selected question: ${selectedQuestion.id}');
-        // 載入之前的對話
-        await chatProvider.loadMessages(selectedQuestion.id, selectedQuestion.grammarTopicId, studentId);
-        await _selectQuestion(selectedQuestion);
+        await _restoreLastSession(selectedQuestion, studentId);
       } catch (e) {
-        // 如果找不到對應的題目，顯示選擇器
         print('Previously selected question not found, showing selector');
         setState(() {
           _showQuestionSelector = true;
@@ -423,6 +433,76 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
         _currentQuestion = null;
       });
     }
+  }
+
+  /// 再次開啟聊天室時還原題目與對話（不重置已選階段）。
+  Future<void> _restoreLastSession(
+    QuestionModel question,
+    String studentId,
+  ) async {
+    final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+    await chatProvider.loadMessages(
+      question.id,
+      question.grammarTopicId,
+      studentId,
+    );
+    if (!mounted) return;
+    setState(() {
+      _currentQuestion = question;
+      _showQuestionSelector = false;
+    });
+    await _loadCompletedStages();
+    _syncAllStageMessageCounts(
+      Provider.of<ChatProvider>(context, listen: false),
+    );
+  }
+
+  void _syncAllStageMessageCounts(ChatProvider chatProvider) {
+    _seenMessageCountByStage.clear();
+    for (final msg in chatProvider.messages) {
+      final stage = msg['stage'] as int?;
+      if (stage == null) continue;
+      _seenMessageCountByStage[stage] =
+          (_seenMessageCountByStage[stage] ?? 0) + 1;
+    }
+  }
+
+  int _stageMessageCount(ChatProvider chatProvider, int stage) {
+    return chatProvider.messages.where((m) => m['stage'] == stage).length;
+  }
+
+  void _scheduleMarkStageMessagesSeen(int stage, int count) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final seen = _seenMessageCountByStage[stage] ?? 0;
+      if (count > seen) {
+        setState(() => _seenMessageCountByStage[stage] = count);
+      }
+    });
+  }
+
+  Widget _buildCircleActionButton({
+    required IconData icon,
+    required String tooltip,
+    VoidCallback? onPressed,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.white,
+        shape: const CircleBorder(),
+        elevation: 2,
+        shadowColor: Colors.black.withValues(alpha: 0.08),
+        child: IconButton(
+          onPressed: onPressed,
+          icon: Icon(icon),
+          color: AiChatTheme.accent,
+          style: IconButton.styleFrom(
+            padding: const EdgeInsets.all(12),
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _selectQuestion(QuestionModel question) async {
@@ -459,7 +539,8 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
     }
     
     await _loadCompletedStages();
-    
+    _syncAllStageMessageCounts(chatProvider);
+
     // 如果是第一次選擇這個題目，在 UI 更新後顯示提示對話框
     if (isFirstTime) {
       // 使用 addPostFrameCallback 確保在 UI 更新後再顯示對話框
@@ -613,6 +694,7 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
     }
     
     chatProvider.setSelectedStage(stage);
+    _seenMessageCountByStage[stage] = _stageMessageCount(chatProvider, stage);
     _scrollToBottom();
   }
 
@@ -665,6 +747,7 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
 
       // 從本地清除該階段的對話
       chatProvider.clearStageMessages(stage);
+      _seenMessageCountByStage[stage] = 0;
     } catch (e) {
       print('Error clearing stage messages: $e');
       ScaffoldMessenger.of(context).showSnackBar(
@@ -896,7 +979,7 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
       'stage': currentStage,
     });
     _messageController.clear();
-    print('User message added, clearing controller');
+    FocusScope.of(context).unfocus();
 
     // 發送給 ChatGPT（這裡需要實現追加問題的邏輯）
     // 由於 ChatGPT API 需要完整的對話歷史，我們需要將所有消息發送過去
@@ -1161,61 +1244,73 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
 
         final questionProvider = Provider.of<QuestionProvider>(context, listen: false);
         final questions = questionProvider.questions;
-        
+        final isRestoringQuestion = !_showQuestionSelector &&
+            _currentQuestion == null &&
+            chatProvider.currentQuestionId != null;
+        final viewBottom = MediaQuery.viewInsetsOf(context).bottom;
+        final showInputBar =
+            !_showQuestionSelector && chatProvider.selectedStage != null;
+        final listBottomPadding = showInputBar
+            ? 16 + _messageInputBarExtent + viewBottom
+            : 16.0;
+
         return Container(
-          decoration: BoxDecoration(
-            color: _showQuestionSelector ? Colors.blue.shade50 : Colors.white,
-            borderRadius: const BorderRadius.only(
+          clipBehavior: Clip.antiAlias,
+          decoration: const BoxDecoration(
+            borderRadius: BorderRadius.only(
               topLeft: Radius.circular(20),
               topRight: Radius.circular(20),
             ),
           ),
-          child: SafeArea(
-            bottom: false,
-            child: Column(
-              children: [
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              const AiChatPastelBackground(),
+              SafeArea(
+                bottom: false,
+                child: Stack(
+                  clipBehavior: Clip.hardEdge,
+                  fit: StackFit.expand,
+                  children: [
+                    Column(
+                  children: [
               // 標題欄
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.green.shade50,
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(20),
-                    topRight: Radius.circular(20),
-                  ),
+              AiChatTheme.glassPanel(
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(20),
+                  topRight: Radius.circular(20),
                 ),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                showBottomDivider: true,
                 child: Row(
                   children: [
-                    const Text(
-                      '🤖',
-                      style: TextStyle(
-                        fontSize: 24,
-                      ),
-                    ),
+                    const AiAssistantIcon(size: 28),
                     const SizedBox(width: 8),
                     const Expanded(
                       child: Text(
                         'AI 小幫手',
                         style: TextStyle(
                           fontSize: 18,
-                          fontWeight: FontWeight.bold,
+                          fontWeight: FontWeight.w600,
+                          color: AiChatTheme.textPrimary,
+                          letterSpacing: -0.2,
                         ),
                       ),
                     ),
                     IconButton(
-                      icon: const Icon(Icons.help_outline),
+                      icon: const Icon(Icons.help_outline, color: AiChatTheme.textSecondary),
                       tooltip: '階段說明',
                       onPressed: () => _showStageInfoDialog(context),
                     ),
                     if (_currentQuestion != null)
                       IconButton(
-                        icon: const Icon(Icons.edit_note),
+                        icon: const Icon(Icons.edit_note, color: AiChatTheme.textSecondary),
                         tooltip: '修改當前題目',
                         onPressed: _showEditCurrentQuestionDialog,
                       ),
                     if (_currentQuestion != null)
                       IconButton(
-                        icon: const Icon(Icons.list_alt),
+                        icon: const Icon(Icons.list_alt, color: AiChatTheme.textSecondary),
                         tooltip: '顯示題目清單',
                         onPressed: () {
                           setState(() {
@@ -1224,7 +1319,7 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
                         },
                       ),
                     IconButton(
-                      icon: const Icon(Icons.close),
+                      icon: const Icon(Icons.close, color: AiChatTheme.textSecondary),
                       onPressed: () => Navigator.of(context).pop(),
                     ),
                   ],
@@ -1235,15 +1330,15 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
                 Expanded(
                   child: Container(
                     padding: const EdgeInsets.all(16),
-                    color: Colors.blue.shade50,
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
                           '請選擇題目',
                           style: TextStyle(
-                            fontWeight: FontWeight.bold,
+                            fontWeight: FontWeight.w600,
                             fontSize: 16,
+                            color: AiChatTheme.textPrimary,
                           ),
                         ),
                         const SizedBox(height: 12),
@@ -1262,23 +1357,35 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
                             itemCount: questions.length,
                             itemBuilder: (context, index) {
                               final question = questions[index];
-                              return Card(
-                                margin: const EdgeInsets.only(bottom: 8),
+                              return Container(
+                                margin: const EdgeInsets.only(bottom: 10),
+                                decoration: AiChatTheme.questionCardDecoration(),
                                 child: ListTile(
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
                                   title: Text(
                                     question.question.length > 50
                                         ? '${question.question.substring(0, 50)}...'
                                         : question.question,
-                                    style: const TextStyle(fontSize: 14),
+                                    style: const TextStyle(
+                                      fontSize: 14,
+                                      color: AiChatTheme.textPrimary,
+                                      fontWeight: FontWeight.w500,
+                                    ),
                                   ),
                                   subtitle: Text(
                                     '階段 ${question.stage}',
-                                    style: TextStyle(
-                                      color: Colors.grey[600],
+                                    style: const TextStyle(
+                                      color: AiChatTheme.textSecondary,
                                       fontSize: 12,
                                     ),
                                   ),
-                                  trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                                  trailing: const Icon(
+                                    Icons.arrow_forward_ios,
+                                    size: 16,
+                                    color: AiChatTheme.textSecondary,
+                                  ),
                                   onTap: () => _selectQuestion(question),
                                 ),
                               );
@@ -1291,8 +1398,8 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
                 ),
               // 階段選擇（可縮放）
               if (!_showQuestionSelector && _currentQuestion != null)
-                Container(
-                  color: Colors.grey[100],
+                AiChatTheme.glassPanel(
+                  showBottomDivider: true,
                   child: Column(
                     children: [
                       InkWell(
@@ -1307,7 +1414,10 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
                             children: [
                               const Text(
                                 '選擇階段',
-                                style: TextStyle(fontWeight: FontWeight.bold),
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  color: AiChatTheme.textPrimary,
+                                ),
                               ),
                               const Spacer(),
                               if (chatProvider.selectedStage != null)
@@ -1322,7 +1432,7 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
                                     '小幫手沒回應嗎?嘗試重新生成',
                                     style: TextStyle(
                                       fontSize: 12,
-                                      color: Colors.blue,
+                                      color: AiChatTheme.accent,
                                     ),
                                   ),
                                 ),
@@ -1366,13 +1476,25 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
                       FocusScope.of(context).unfocus();
                     },
                     behavior: HitTestBehavior.translucent,
-                    child: _currentQuestion == null
+                    child: isRestoringQuestion
                         ? const Center(
-                            child: Text('請選擇一個題目'),
+                            child: CircularProgressIndicator(
+                              color: AiChatTheme.accent,
+                            ),
+                          )
+                        : _currentQuestion == null
+                        ? const Center(
+                            child: Text(
+                              '請選擇一個題目',
+                              style: TextStyle(color: AiChatTheme.textSecondary),
+                            ),
                           )
                         : chatProvider.selectedStage == null
                             ? const Center(
-                                child: Text('請選擇一個階段開始'),
+                                child: Text(
+                                  '請選擇一個階段開始',
+                                  style: TextStyle(color: AiChatTheme.textSecondary),
+                                ),
                               )
                             : Builder(
                                 builder: (context) {
@@ -1381,6 +1503,16 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
                                       .where((msg) => msg['stage'] == chatProvider.selectedStage)
                                       .toList();
                                   
+                                  final stage = chatProvider.selectedStage!;
+                                  final seenCount =
+                                      _seenMessageCountByStage[stage] ?? 0;
+                                  if (currentStageMessages.length > seenCount) {
+                                    _scheduleMarkStageMessagesSeen(
+                                      stage,
+                                      currentStageMessages.length,
+                                    );
+                                  }
+
                                   if (currentStageMessages.isEmpty && !chatProvider.isLoading) {
                                     return Center(
                                       child: Padding(
@@ -1390,13 +1522,21 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
                                           children: [
                                             const Text(
                                               '該階段尚未開始對話',
-                                              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                                              style: TextStyle(
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.w600,
+                                                color: AiChatTheme.textPrimary,
+                                              ),
                                             ),
                                             const SizedBox(height: 10),
                                             Text(
                                               '可先點上方「修改當前題目」微調內容，再送出階段提示。\n若不知道怎麼問，可直接輸入：請用繁體中文給我一個簡單示例。',
                                               textAlign: TextAlign.center,
-                                              style: TextStyle(fontSize: 13, color: Colors.grey[700], height: 1.4),
+                                              style: TextStyle(
+                                                fontSize: 13,
+                                                color: AiChatTheme.textSecondary,
+                                                height: 1.4,
+                                              ),
                                             ),
                                           ],
                                         ),
@@ -1406,7 +1546,12 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
                                   
                                   return ListView.builder(
                                     controller: _scrollController,
-                                    padding: const EdgeInsets.all(16),
+                                    padding: EdgeInsets.fromLTRB(
+                                      16,
+                                      16,
+                                      16,
+                                      listBottomPadding,
+                                    ),
                                     itemCount: currentStageMessages.length + (chatProvider.isLoading ? 1 : 0),
                                     itemBuilder: (context, index) {
                                     if (index == currentStageMessages.length) {
@@ -1422,48 +1567,20 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
                                     final isUser = message['type'] == 'user';
                                     final isSystem = message['type'] == 'system';
 
-                                    return Align(
+                                    return _AnimatedChatBubble(
+                                      key: ValueKey('chat_${stage}_$index'),
+                                      animate: index >= seenCount,
                                       alignment: isSystem
                                           ? Alignment.center
-                                          : (isUser ? Alignment.centerRight : Alignment.centerLeft),
-                                      child: Container(
-                                        margin: const EdgeInsets.only(bottom: 16),
-                                        padding: const EdgeInsets.all(12),
-                                        decoration: BoxDecoration(
-                                          color: isSystem
-                                              ? Colors.blue.shade50
-                                              : (isUser ? Colors.green.shade100 : Colors.grey[200]),
-                                          borderRadius: BorderRadius.circular(12),
-                                          border: isSystem
-                                              ? Border.all(color: Colors.blue.shade200, width: 1)
-                                              : null,
-                                        ),
-                                        constraints: BoxConstraints(
-                                          maxWidth: MediaQuery.of(context).size.width * 0.75,
-                                        ),
-                                        child: Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
-                                          children: [
-                                            if (message['stage'] != null && !isSystem)
-                                              Text(
-                                                '階段 ${message['stage']}',
-                                                style: const TextStyle(
-                                                  fontWeight: FontWeight.bold,
-                                                  fontSize: 12,
-                                                ),
-                                              ),
-                                            if (message['stage'] != null && !isSystem)
-                                              const SizedBox(height: 4),
-                                            Text(
-                                              message['content'] as String,
-                                              style: TextStyle(
-                                                fontSize: 14,
-                                                fontStyle: isSystem ? FontStyle.italic : FontStyle.normal,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
+                                          : (isUser
+                                              ? Alignment.centerRight
+                                              : Alignment.centerLeft),
+                                      isUser: isUser,
+                                      isSystem: isSystem,
+                                      maxWidth:
+                                          MediaQuery.of(context).size.width *
+                                              0.78,
+                                      content: message['content'] as String,
                                     );
                                   },
                                 );
@@ -1471,95 +1588,100 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
                             ),
                   ),
                 ),
-              // 輸入框（當有選中階段時顯示）
-              if (!_showQuestionSelector && chatProvider.selectedStage != null)
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    border: Border(
-                      top: BorderSide(color: Colors.grey[300]!),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _messageController,
-                          decoration: InputDecoration(
-                            hintText: '輸入您的問題...',
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(24),
-                              borderSide: BorderSide(color: Colors.grey[300]!),
-                            ),
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                            filled: true,
-                            fillColor: Colors.grey[50],
+                  ],
+                ),
+                    if (showInputBar)
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: viewBottom,
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              if (!_completedStages
+                                      .containsKey(chatProvider.selectedStage) &&
+                                  !_isLoadingStages) ...[
+                                _buildCircleActionButton(
+                                  icon: Icons.check_circle_outline,
+                                  tooltip:
+                                      '完成階段 ${chatProvider.selectedStage}',
+                                  onPressed: () => _completeStage(
+                                    chatProvider.selectedStage!,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                              ],
+                              Expanded(
+                                child: TextField(
+                                  controller: _messageController,
+                                  style: const TextStyle(
+                                    color: AiChatTheme.textPrimary,
+                                  ),
+                                  decoration: InputDecoration(
+                                    hintText: '輸入您的問題...',
+                                    hintStyle:
+                                        TextStyle(color: Colors.grey.shade400),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(
+                                        AiChatTheme.radiusPill,
+                                      ),
+                                      borderSide: BorderSide.none,
+                                    ),
+                                    enabledBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(
+                                        AiChatTheme.radiusPill,
+                                      ),
+                                      borderSide: BorderSide.none,
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(
+                                        AiChatTheme.radiusPill,
+                                      ),
+                                      borderSide: BorderSide(
+                                        color: AiChatTheme.accent
+                                            .withValues(alpha: 0.35),
+                                        width: 1.5,
+                                      ),
+                                    ),
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 20,
+                                      vertical: 14,
+                                    ),
+                                    filled: true,
+                                    fillColor: Colors.white,
+                                  ),
+                                  maxLines: null,
+                                  textInputAction: TextInputAction.send,
+                                  onSubmitted: (_) => _sendAdditionalMessage(),
+                                  scrollPadding: EdgeInsets.zero,
+                                  onTap: () {
+                                    Future.delayed(
+                                      const Duration(milliseconds: 300),
+                                      _scrollToBottom,
+                                    );
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              _buildCircleActionButton(
+                                icon: Icons.arrow_upward_rounded,
+                                tooltip: '送出',
+                                onPressed: chatProvider.isLoading
+                                    ? null
+                                    : _sendAdditionalMessage,
+                              ),
+                            ],
                           ),
-                          maxLines: null,
-                          textInputAction: TextInputAction.send,
-                          onSubmitted: (_) => _sendAdditionalMessage(),
-                          scrollPadding: const EdgeInsets.all(20.0),
-                          onTap: () {
-                            // 當點擊輸入框時，滾動到底部，確保輸入框可見
-                            Future.delayed(const Duration(milliseconds: 300), () {
-                              _scrollToBottom();
-                            });
-                          },
                         ),
                       ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                        onPressed: chatProvider.isLoading 
-                            ? null 
-                            : () {
-                                print('Send button clicked, isLoading: ${chatProvider.isLoading}');
-                                _sendAdditionalMessage();
-                              },
-                        icon: const Icon(Icons.send),
-                        color: Colors.green.shade600,
-                        style: IconButton.styleFrom(
-                          backgroundColor: Colors.green.shade50,
-                          padding: const EdgeInsets.all(12),
-                        ),
-                      ),
-                    ],
-                  ),
+                  ],
                 ),
-              // 完成階段按鈕
-              if (!_showQuestionSelector && 
-                  chatProvider.selectedStage != null && 
-                  !_completedStages.containsKey(chatProvider.selectedStage) &&
-                  !_isLoadingStages)
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.green.shade50,
-                    border: Border(
-                      top: BorderSide(color: Colors.grey[300]!),
-                    ),
-                  ),
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: () => _completeStage(chatProvider.selectedStage!),
-                      icon: const Icon(Icons.check_circle),
-                      label: Text('完成階段 ${chatProvider.selectedStage}'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green.shade600,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
+              ),
             ],
           ),
-            ),
-          );
+        );
         },
       );
     }
@@ -1586,13 +1708,26 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
                 _sendStagePrompt(stage);
               },
         style: ElevatedButton.styleFrom(
-          backgroundColor: isCompleted 
-              ? Colors.green.shade300
-              : (isSelected ? Colors.green.shade600 : Colors.white),
-          foregroundColor: isCompleted || isSelected ? Colors.white : Colors.black,
-          elevation: 0,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          minimumSize: const Size(0, 36),
+          backgroundColor: isCompleted
+              ? const Color(0xFFD4EDDA)
+              : (isSelected
+                  ? Colors.white
+                  : Colors.white.withValues(alpha: 0.45)),
+          foregroundColor: isCompleted
+              ? const Color(0xFF2E7D4F)
+              : (isSelected ? AiChatTheme.accent : AiChatTheme.textPrimary),
+          elevation: isSelected ? 2 : 0,
+          shadowColor: Colors.black.withValues(alpha: 0.06),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          minimumSize: const Size(0, 38),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AiChatTheme.radiusPill),
+            side: BorderSide(
+              color: isSelected
+                  ? AiChatTheme.accentSoft.withValues(alpha: 0.6)
+                  : Colors.white.withValues(alpha: 0.85),
+            ),
+          ),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -1617,18 +1752,12 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
   Future<void> _showAiDisabledDialogAndClose() async {
     if (!mounted || _isAiDisabledDialogShowing) return;
     _isAiDisabledDialogShowing = true;
-    await showDialog<void>(
+    await AdaptiveAppDialog.showNotify(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('AI 小幫手已關閉'),
-        content: const Text('老師已關閉 AI 小幫手，聊天室將自動關閉。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('知道了'),
-          ),
-        ],
-      ),
+      title: 'AI 功能目前已關閉',
+      message: '老師已關閉 AI 小幫手，聊天室將自動關閉。',
+      iconSfSymbol: 'sparkles.slash',
+      confirmLabel: '知道了',
     );
     _isAiDisabledDialogShowing = false;
     if (!mounted) return;
@@ -1639,6 +1768,104 @@ class _ChatGPTChatScreenState extends State<ChatGPTChatScreen> {
 }
 
 // 三個點點跳動的思考動畫
+/// 新訊息氣泡彈出動畫（僅 [animate] 為 true 時播放）。
+class _AnimatedChatBubble extends StatefulWidget {
+  const _AnimatedChatBubble({
+    super.key,
+    required this.animate,
+    required this.alignment,
+    required this.isUser,
+    required this.isSystem,
+    required this.maxWidth,
+    required this.content,
+  });
+
+  final bool animate;
+  final Alignment alignment;
+  final bool isUser;
+  final bool isSystem;
+  final double maxWidth;
+  final String content;
+
+  @override
+  State<_AnimatedChatBubble> createState() => _AnimatedChatBubbleState();
+}
+
+class _AnimatedChatBubbleState extends State<_AnimatedChatBubble>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _scale;
+  late final Animation<double> _opacity;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 340),
+    );
+    _scale = Tween<double>(begin: 0.68, end: 1).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeOutBack),
+    );
+    _opacity = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: const Interval(0, 0.7, curve: Curves.easeOut),
+      ),
+    );
+    if (widget.animate) {
+      _controller.forward();
+    } else {
+      _controller.value = 1;
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scaleAlignment = widget.isUser
+        ? Alignment.centerRight
+        : (widget.isSystem ? Alignment.center : Alignment.centerLeft);
+
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return Opacity(
+          opacity: _opacity.value,
+          child: Transform.scale(
+            scale: _scale.value,
+            alignment: scaleAlignment,
+            child: child,
+          ),
+        );
+      },
+      child: Align(
+        alignment: widget.alignment,
+        child: AiChatTheme.messageBubble(
+          isUser: widget.isUser,
+          isSystem: widget.isSystem,
+          maxWidth: widget.maxWidth,
+          child: Text(
+            widget.content,
+            style: TextStyle(
+              fontSize: 14,
+              height: 1.45,
+              color: AiChatTheme.textPrimary,
+              fontStyle:
+                  widget.isSystem ? FontStyle.italic : FontStyle.normal,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ThinkingAnimation extends StatefulWidget {
   const _ThinkingAnimation();
 
@@ -1690,8 +1917,8 @@ class _ThinkingAnimationState extends State<_ThinkingAnimation>
                     child: Container(
                       width: 8,
                       height: 8,
-                      decoration: BoxDecoration(
-                        color: Colors.blue.shade400,
+                      decoration: const BoxDecoration(
+                        color: AiChatTheme.accentSoft,
                         shape: BoxShape.circle,
                       ),
                     ),
@@ -1706,7 +1933,7 @@ class _ThinkingAnimationState extends State<_ThinkingAnimation>
           '小幫手正在思考中~',
           style: TextStyle(
             fontSize: 14,
-            color: Colors.grey[600],
+            color: AiChatTheme.textSecondary,
             fontStyle: FontStyle.italic,
           ),
         ),
@@ -1715,8 +1942,19 @@ class _ThinkingAnimationState extends State<_ThinkingAnimation>
   }
 }
 
-// 彈出式聊天對話框
+// 彈出式聊天對話框（須先確認 AI 已開啟）
 void showChatDialog(BuildContext context) {
+  final aiSettings =
+      Provider.of<AiChatSettingsProvider>(context, listen: false);
+  if (!aiSettings.isEnabled) {
+    AdaptiveAppDialog.showNotify(
+      context: context,
+      title: 'AI 功能目前已關閉',
+      message: '老師已關閉 AI 小幫手，目前無法使用。',
+      iconSfSymbol: 'sparkles.slash',
+    );
+    return;
+  }
   showModalBottomSheet(
     context: context,
     isScrollControlled: true,
@@ -1729,15 +1967,7 @@ void showChatDialog(BuildContext context) {
       minChildSize: 0.5,
       maxChildSize: 0.95,
       builder: (context, scrollController) {
-        final keyboardHeight = MediaQuery.of(context).viewInsets.bottom;
-        // iOS 和 Android 都使用相同的處理方式
-        // MediaQuery.of(context).viewInsets.bottom 在兩個平台上都能正確工作
-        return AnimatedPadding(
-          padding: EdgeInsets.only(bottom: keyboardHeight),
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-          child: const ChatGPTChatScreen(),
-        );
+        return const ChatGPTChatScreen();
       },
     ),
   );

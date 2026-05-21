@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../../providers/grammar_topic_provider.dart';
 import '../../../providers/auth_provider.dart';
+import '../../../providers/class_provider.dart';
+import '../../../widgets/teacher_tab_top_bar.dart';
 import '../../../models/grammar_topic_model.dart';
 import 'edit_grammar_topic_screen.dart';
 import 'edit_key_points_screen.dart';
@@ -19,15 +21,31 @@ class _CoursesTabState extends State<CoursesTab> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      Provider.of<GrammarTopicProvider>(context, listen: false).loadTopics();
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      final classProvider = Provider.of<ClassProvider>(context, listen: false);
+      final grammarTopicProvider =
+          Provider.of<GrammarTopicProvider>(context, listen: false);
+      if (authProvider.currentUser != null) {
+        classProvider.loadTeacherClasses(authProvider.currentUser!.id);
+      }
+      grammarTopicProvider.loadTopics(
+        classId: classProvider.selectedClass?.id,
+      );
     });
+  }
+
+  Future<void> _reloadTopics() async {
+    final classProvider = Provider.of<ClassProvider>(context, listen: false);
+    await Provider.of<GrammarTopicProvider>(context, listen: false).loadTopics(
+      classId: classProvider.selectedClass?.id,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final grammarTopicProvider = Provider.of<GrammarTopicProvider>(context);
     final authProvider = Provider.of<AuthProvider>(context);
-    final user = authProvider.currentUser;
+    final classProvider = Provider.of<ClassProvider>(context);
 
     return SafeArea(
       child: Container(
@@ -44,72 +62,14 @@ class _CoursesTabState extends State<CoursesTab> {
         ),
         child: Column(
           children: [
-            // 頂部區域
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
-              child: Row(
-                children: [
-                  // 頭像和問候語
-                  Expanded(
-                    child: Row(
-                      children: [
-                        CircleAvatar(
-                          radius: 28,
-                          backgroundColor: Colors.green.shade400,
-                          child: Text(
-                            user?.name.isNotEmpty == true ? user!.name[0].toUpperCase() : 'T',
-                            style: const TextStyle(
-                              fontSize: 24,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        const Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                '課程管理',
-                                style: TextStyle(
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF1F2937),
-                                ),
-                              ),
-                              Text(
-                                '管理文法主題與內容',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  // 右側圖標
-                  Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.notifications_outlined),
-                        onPressed: () {
-                          // TODO: 通知功能
-                        },
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.insights_outlined),
-                        onPressed: () {
-                          // TODO: 統計功能
-                        },
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+            TeacherTabTopBar(
+              selectedClass: classProvider.selectedClass,
+              onClassSelected: (classId) async {
+                Provider.of<ClassProvider>(context, listen: false)
+                    .selectClassById(classId);
+                await _reloadTopics();
+              },
+              trailing: const SizedBox.shrink(),
             ),
             // 新增課程按鈕
             Padding(
@@ -332,7 +292,7 @@ class _CoursesTabState extends State<CoursesTab> {
                     context: context,
                     builder: (context) => EditGrammarTopicScreen(topic: topic),
                   );
-                  grammarTopicProvider.loadTopics();
+                  await _reloadTopics();
                 },
                       ),
                       const SizedBox(height: 12),
@@ -650,11 +610,15 @@ class _CoursesTabState extends State<CoursesTab> {
           TextButton(
             onPressed: () async {
               if (titleController.text.isNotEmpty && authProvider.currentUser != null) {
+                final classId = Provider.of<ClassProvider>(context, listen: false)
+                    .selectedClass?.id;
                 await provider.createTopic(
                   titleController.text,
                   descriptionController.text,
                   authProvider.currentUser!.id,
+                  classId: classId,
                 );
+                await _reloadTopics();
                 if (context.mounted) {
                   Navigator.pop(context);
                 }

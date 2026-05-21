@@ -6,7 +6,9 @@ import '../../models/grammar_topic_model.dart';
 import '../../providers/class_provider.dart';
 import '../../providers/grammar_topic_provider.dart';
 import '../../providers/auth_provider.dart';
+import '../../providers/ai_chat_settings_provider.dart';
 import '../../services/supabase_service.dart';
+import '../../widgets/ai_assistant_icon.dart';
 import 'tabs/edit_grammar_topic_screen.dart';
 import 'tabs/edit_key_points_screen.dart';
 import 'tabs/edit_reminders_screen.dart';
@@ -31,6 +33,11 @@ class _ClassDetailScreenState extends State<ClassDetailScreen> with SingleTicker
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     _loadData();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Provider.of<AiChatSettingsProvider>(context, listen: false)
+          .refreshForClass(widget.classModel.id);
+    });
   }
 
   @override
@@ -93,11 +100,19 @@ class _ClassDetailScreenState extends State<ClassDetailScreen> with SingleTicker
           ],
         ),
       ),
-      body: TabBarView(
-        controller: _tabController,
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _buildCoursesTab(),
-          _buildStudentsTab(),
+          _buildAiHelperControlCard(context),
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: [
+                _buildCoursesTab(),
+                _buildStudentsTab(),
+              ],
+            ),
+          ),
         ],
       ),
       floatingActionButton: _tabController.index == 0
@@ -108,6 +123,83 @@ class _ClassDetailScreenState extends State<ClassDetailScreen> with SingleTicker
               label: const Text('新增課程'),
             )
           : null,
+    );
+  }
+
+  Widget _buildAiHelperControlCard(BuildContext context) {
+    return Consumer<AiChatSettingsProvider>(
+      builder: (context, aiSettings, _) {
+        final enabled = aiSettings.isLoaded &&
+                aiSettings.boundClassId == widget.classModel.id
+            ? aiSettings.isEnabled
+            : widget.classModel.aiHelperEnabled;
+
+        return Container(
+          margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.06),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: SwitchListTile(
+            secondary: AiAssistantIcon(
+              size: 22,
+              color: enabled ? Colors.indigo.shade600 : Colors.grey,
+            ),
+            title: const Text(
+              'AI 小幫手',
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 16,
+              ),
+            ),
+            subtitle: Text(
+              enabled
+                  ? '學生可使用 AI 小幫手'
+                  : '學生點擊時會提示功能已關閉',
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.grey[600],
+              ),
+            ),
+            value: enabled,
+            onChanged: aiSettings.isUpdating || !aiSettings.isLoaded
+                ? null
+                : (value) async {
+                    final classProvider =
+                        Provider.of<ClassProvider>(context, listen: false);
+                    final ok = await aiSettings.setEnabledForClass(
+                      classId: widget.classModel.id,
+                      enabled: value,
+                    );
+                    if (ok) {
+                      classProvider.updateLocalClassAiHelper(
+                        widget.classModel.id,
+                        value,
+                      );
+                    }
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          ok
+                              ? (value ? '已開啟此班級的 AI 小幫手' : '已關閉此班級的 AI 小幫手')
+                              : 'AI 小幫手設定更新失敗',
+                        ),
+                        backgroundColor: ok ? Colors.green : Colors.red,
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                  },
+          ),
+        );
+      },
     );
   }
 

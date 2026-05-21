@@ -25,6 +25,8 @@ class AiChatSettingsProvider with ChangeNotifier {
     required String studentId,
     String? classId,
   }) async {
+    final previousEnabled = _isEnabled;
+    final wasLoaded = _isLoaded;
     try {
       _boundClassId = classId;
       _isEnabled = await _supabaseService.getStudentAiHelperEnabled(studentId);
@@ -32,7 +34,9 @@ class AiChatSettingsProvider with ChangeNotifier {
       _isEnabled = true;
     } finally {
       _isLoaded = true;
-      notifyListeners();
+      if (!wasLoaded || previousEnabled != _isEnabled) {
+        notifyListeners();
+      }
     }
 
     await bindStudentRealtime(
@@ -42,6 +46,8 @@ class AiChatSettingsProvider with ChangeNotifier {
   }
 
   Future<void> refreshForClass(String classId) async {
+    final previousEnabled = _isEnabled;
+    final wasLoaded = _isLoaded;
     try {
       _boundClassId = classId;
       _isEnabled = await _supabaseService.getClassAiHelperEnabled(classId);
@@ -49,7 +55,9 @@ class AiChatSettingsProvider with ChangeNotifier {
       _isEnabled = true;
     } finally {
       _isLoaded = true;
-      notifyListeners();
+      if (!wasLoaded || previousEnabled != _isEnabled) {
+        notifyListeners();
+      }
     }
   }
 
@@ -85,10 +93,13 @@ class AiChatSettingsProvider with ChangeNotifier {
     String? effectiveClassId = classId;
     if (effectiveClassId == null || effectiveClassId.isEmpty) {
       try {
-        final enabled = await _supabaseService.getStudentAiHelperEnabled(studentId);
-        _isEnabled = enabled;
-        _isLoaded = true;
-        notifyListeners();
+        final enabled =
+            await _supabaseService.getStudentAiHelperEnabled(studentId);
+        if (!_isLoaded || enabled != _isEnabled) {
+          _isEnabled = enabled;
+          _isLoaded = true;
+          notifyListeners();
+        }
       } catch (_) {}
       return;
     }

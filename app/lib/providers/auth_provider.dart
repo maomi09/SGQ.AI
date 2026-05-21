@@ -12,12 +12,14 @@ class AuthProvider with ChangeNotifier {
   final SupabaseService _supabaseService = SupabaseService();
   UserModel? _currentUser;
   bool _isLoading = false;
+  bool _hasResolvedInitialAuth = false;
   String? _errorMessage;
   String? _currentSessionId; // 當前活動的 session ID
   bool _isHandlingSession = false;
 
   UserModel? get currentUser => _currentUser;
   bool get isLoading => _isLoading;
+  bool get hasResolvedInitialAuth => _hasResolvedInitialAuth;
   bool get isAuthenticated => _currentUser != null;
   String? get errorMessage => _errorMessage;
   
@@ -773,6 +775,7 @@ class AuthProvider with ChangeNotifier {
       _currentUser = null;
     } finally {
       _isLoading = false;
+      _hasResolvedInitialAuth = true;
       notifyListeners();
     }
   }

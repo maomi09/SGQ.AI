@@ -36,6 +36,11 @@ class AppConfig {
   // 7. Google Cloud Console: OAuth 客戶端設定
   static const String bundleId = 'com.sgqai.app';
 
+  /// 學生使用回饋 Google 表單連結。
+  /// 建立表單後請貼上 forms.gle 或 docs.google.com/forms 網址；留空則不顯示回饋彈窗。
+  /// 題目範本見 app/docs/student-feedback-google-form.md
+  static const String studentFeedbackFormUrl = 'https://docs.google.com/forms/d/e/1FAIpQLScTjzk9xtgGCS_-ZOGbZWH71LxNJ7rbQ1hpS42joUC5pXqSFg/viewform?usp=dialog';
+
   // 生成深度連結 URL 的輔助方法
   static String getDeepLinkUrl(String path) {
     return '$bundleId://$path';

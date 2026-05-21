@@ -1,15 +1,25 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/class_model.dart';
 import '../services/supabase_service.dart';
 
+/// 與班級選擇器 [kAllClassesMenuValue] 相同，用於持久化「所有班級」。
+const String kTeacherAllClassesPersistValue = '__all_classes__';
+
 class ClassProvider with ChangeNotifier {
   final SupabaseService _supabaseService = SupabaseService();
-  
+
+  static String _teacherClassPrefsKey(String teacherId) =>
+      'teacher_last_selected_class_$teacherId';
+
   List<ClassModel> _classes = [];
   ClassModel? _selectedClass;
   ClassModel? _studentClass;
   bool _isLoading = false;
   String? _error;
+  String? _activeTeacherId;
 
   List<ClassModel> get classes => _classes;
   ClassModel? get selectedClass => _selectedClass;
@@ -17,20 +27,60 @@ class ClassProvider with ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get error => _error;
 
+  Future<void> _restoreTeacherClassSelection(String teacherId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getString(_teacherClassPrefsKey(teacherId));
+      if (saved == null) {
+        return;
+      }
+      if (saved == kTeacherAllClassesPersistValue) {
+        _selectedClass = null;
+        return;
+      }
+      if (_classes.any((c) => c.id == saved)) {
+        _selectedClass = _classes.firstWhere((c) => c.id == saved);
+      } else {
+        _selectedClass = null;
+        unawaited(_persistTeacherClassSelection(teacherId));
+      }
+    } catch (e) {
+      print('Restore teacher class selection failed: $e');
+    }
+  }
+
+  Future<void> _persistTeacherClassSelection(String teacherId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final key = _teacherClassPrefsKey(teacherId);
+      if (_selectedClass == null) {
+        await prefs.setString(key, kTeacherAllClassesPersistValue);
+      } else {
+        await prefs.setString(key, _selectedClass!.id);
+      }
+    } catch (e) {
+      print('Persist teacher class selection failed: $e');
+    }
+  }
+
   // 載入老師的所有班級
   Future<void> loadTeacherClasses(String teacherId) async {
+    _activeTeacherId = teacherId;
     _isLoading = true;
     _error = null;
     notifyListeners();
 
     try {
       _classes = await _supabaseService.getTeacherClasses(teacherId);
-      
+      _selectedClass = null;
+      await _restoreTeacherClassSelection(teacherId);
+
       // 如果已選擇的班級被刪除，清除選擇
       if (_selectedClass != null) {
         final stillExists = _classes.any((c) => c.id == _selectedClass!.id);
         if (!stillExists) {
           _selectedClass = null;
+          unawaited(_persistTeacherClassSelection(teacherId));
         }
       }
     } catch (e) {
@@ -62,18 +112,40 @@ class ClassProvider with ChangeNotifier {
   // 選擇班級（老師端使用）
   void selectClass(ClassModel? classModel) {
     _selectedClass = classModel;
+    final teacherId = _activeTeacherId;
+    if (teacherId != null) {
+      unawaited(_persistTeacherClassSelection(teacherId));
+    }
     notifyListeners();
   }
 
-  // 通過 ID 選擇班級
+  /// 更新本地班級 AI 小幫手開關狀態（與伺服器同步後呼叫）。
+  void updateLocalClassAiHelper(String classId, bool enabled) {
+    final index = _classes.indexWhere((c) => c.id == classId);
+    if (index >= 0) {
+      _classes[index] = _classes[index].copyWith(aiHelperEnabled: enabled);
+    }
+    if (_selectedClass?.id == classId) {
+      _selectedClass = _selectedClass!.copyWith(aiHelperEnabled: enabled);
+    }
+    notifyListeners();
+  }
+
+  // 通過 ID 選擇班級；[classId] 為 null 或 [kAllClassesMenuValue] 表示所有班級
   void selectClassById(String? classId) {
-    if (classId == null) {
+    if (classId == null || classId == kTeacherAllClassesPersistValue) {
+      _selectedClass = null;
+    } else if (_classes.isEmpty) {
       _selectedClass = null;
     } else {
       _selectedClass = _classes.firstWhere(
         (c) => c.id == classId,
         orElse: () => _classes.first,
       );
+    }
+    final teacherId = _activeTeacherId;
+    if (teacherId != null) {
+      unawaited(_persistTeacherClassSelection(teacherId));
     }
     notifyListeners();
   }
@@ -148,8 +220,12 @@ class ClassProvider with ChangeNotifier {
       // 如果刪除的是已選擇的班級，清除選擇
       if (_selectedClass?.id == classId) {
         _selectedClass = null;
+        final teacherId = _activeTeacherId;
+        if (teacherId != null) {
+          unawaited(_persistTeacherClassSelection(teacherId));
+        }
       }
-      
+
       notifyListeners();
       return true;
     } catch (e) {
@@ -218,11 +294,12 @@ class ClassProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  // 清除狀態（登出時使用）
+  // 清除狀態（登出時使用；班級選擇偏好保留於本機供下次登入還原）
   void clear() {
     _classes = [];
     _selectedClass = null;
     _studentClass = null;
+    _activeTeacherId = null;
     _isLoading = false;
     _error = null;
     notifyListeners();

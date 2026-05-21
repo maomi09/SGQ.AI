@@ -1,14 +1,19 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:cupertino_native_better/cupertino_native_better.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:provider/provider.dart';
 import 'dart:async';
 import '../../providers/auth_provider.dart';
+import '../../providers/class_provider.dart';
 import '../../services/supabase_service.dart';
 import 'tabs/classes_tab.dart';
 import 'tabs/dashboard_tab.dart';
 import 'tabs/statistics_tab.dart';
+import 'tabs/questions_tab.dart';
 import '../student/tabs/profile_tab.dart';
+import '../../widgets/adaptive_app_dialog.dart';
+import '../../widgets/sgq_main_loading_overlay.dart';
 
 class TeacherMainScreen extends StatefulWidget {
   const TeacherMainScreen({super.key});
@@ -18,7 +23,11 @@ class TeacherMainScreen extends StatefulWidget {
 }
 
 class _TeacherMainScreenState extends State<TeacherMainScreen> {
-  int _currentIndex = 0;
+  /// 班級分頁（與 [IndexedStack] 順序一致，啟動／登入後固定停留此頁）
+  static const int _classesTabIndex = 0;
+
+  int _currentIndex = _classesTabIndex;
+  bool _isTabBarWarmingUp = true;
   final SupabaseClient _client = Supabase.instance.client;
   final SupabaseService _supabaseService = SupabaseService();
   RealtimeChannel? _messageNotifyChannel;
@@ -32,7 +41,32 @@ class _TeacherMainScreenState extends State<TeacherMainScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _bindMessageNotificationsIfNeeded());
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      final user = authProvider.currentUser;
+      if (user != null && user.role == 'teacher') {
+        await Provider.of<ClassProvider>(context, listen: false)
+            .loadTeacherClasses(user.id);
+      }
+      await _warmUpTabBarLabels();
+      if (mounted) {
+        setState(() => _isTabBarWarmingUp = false);
+      }
+      _bindMessageNotificationsIfNeeded();
+    });
+  }
+
+  /// 原生 CNTabBar 初次建立時常無法正確渲染未選中分頁標題，造成底部列抽動。
+  Future<void> _warmUpTabBarLabels() async {
+    const tabCount = 5;
+    for (var i = 1; i < tabCount; i++) {
+      if (!mounted) return;
+      setState(() => _currentIndex = i);
+      await Future.delayed(const Duration(milliseconds: 45));
+    }
+    if (!mounted) return;
+    setState(() => _currentIndex = _classesTabIndex);
+    await Future.delayed(const Duration(milliseconds: 120));
   }
 
   @override
@@ -155,93 +189,154 @@ class _TeacherMainScreenState extends State<TeacherMainScreen> {
   }) async {
     if (!mounted || _isNotifyDialogShowing) return;
     _isNotifyDialogShowing = true;
-    await showDialog<void>(
+    await AdaptiveAppDialog.showNotify(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(title),
-        content: Text(message),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('知道了'),
-          ),
-        ],
-      ),
+      title: title,
+      message: message,
     );
     _isNotifyDialogShowing = false;
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final isAndroid = Theme.of(context).platform == TargetPlatform.android;
+  /// 非 iOS 26：TabBar 背景延伸至螢幕底，Home Indicator 區用內距留白，避免 SafeArea 外側空隙。
+  Widget _buildTeacherBottomTabBar({
+    required bool shouldInsetBottomTabBar,
+    required double bottomBarExtraPadding,
+    required bool extendBarThroughHomeIndicator,
+  }) {
+    final tabBar = CNTabBar(
+      key: const ValueKey('teacher-main-tab-bar'),
+      backgroundColor: Colors.transparent,
+      items: const [
+        CNTabBarItem(
+          label: '班級',
+          icon: CNSymbol('person.3'),
+          activeIcon: CNSymbol('person.3.fill'),
+        ),
+        CNTabBarItem(
+          label: '儀錶板',
+          icon: CNSymbol('square.grid.2x2'),
+          activeIcon: CNSymbol('square.grid.2x2.fill'),
+        ),
+        CNTabBarItem(
+          label: '題目',
+          icon: CNSymbol('doc.text'),
+          activeIcon: CNSymbol('doc.text.fill'),
+        ),
+        CNTabBarItem(
+          label: '數據',
+          icon: CNSymbol('chart.bar'),
+          activeIcon: CNSymbol('chart.bar.fill'),
+        ),
+        CNTabBarItem(
+          label: '個人',
+          icon: CNSymbol('person'),
+          activeIcon: CNSymbol('person.fill'),
+        ),
+      ],
+      currentIndex: _currentIndex,
+      onTap: (index) {
+        if (_currentIndex != index) {
+          setState(() => _currentIndex = index);
+        }
+      },
+    );
+
+    if (extendBarThroughHomeIndicator) {
+      final bottomInset = MediaQuery.paddingOf(context).bottom;
+      return DecoratedBox(
+        decoration: BoxDecoration(
+          color: CupertinoColors.systemBackground.resolveFrom(context),
+          border: Border(
+            top: BorderSide(
+              color: CupertinoColors.separator.resolveFrom(context),
+              width: 0.5,
+            ),
+          ),
+        ),
+        child: Padding(
+          padding: EdgeInsets.only(
+            bottom: bottomInset + bottomBarExtraPadding,
+          ),
+          child: tabBar,
+        ),
+      );
+    }
+
+    return SafeArea(
+      top: false,
+      bottom: shouldInsetBottomTabBar,
+      child: Padding(
+        padding: EdgeInsets.only(bottom: bottomBarExtraPadding),
+        child: tabBar,
+      ),
+    );
+  }
+
+  Widget _buildMainTabScaffold({required bool showLoadingOverlay}) {
+    final platform = Theme.of(context).platform;
+    final isAndroid = platform == TargetPlatform.android;
+    final isIOS = platform == TargetPlatform.iOS;
     final shouldInsetBottomTabBar = isAndroid ? true : !PlatformVersion.shouldUseNativeGlass;
+    final extendBarThroughHomeIndicator = isIOS && shouldInsetBottomTabBar;
     final bottomBarExtraPadding = isAndroid ? 6.0 : 0.0;
+
     return Scaffold(
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      backgroundColor: Colors.transparent,
       extendBody: true,
+      resizeToAvoidBottomInset: false,
       body: MediaQuery.removePadding(
         context: context,
-        removeBottom: !shouldInsetBottomTabBar,
+        removeBottom: isIOS,
         child: Stack(
           fit: StackFit.expand,
           children: [
-          Positioned.fill(
-            child: IndexedStack(
-              index: _currentIndex,
-              children: const [
-                ClassesTab(),
-                DashboardTab(),
-                StatisticsTab(),
-                ProfileTab(),
-              ],
-            ),
-          ),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: SafeArea(
-              top: false,
-              bottom: shouldInsetBottomTabBar,
-              child: Padding(
-                padding: EdgeInsets.only(bottom: bottomBarExtraPadding),
-                child: CNTabBar(
-                  backgroundColor: Colors.transparent,
-                  items: const [
-                    CNTabBarItem(
-                      label: '班級',
-                      icon: CNSymbol('person.3'),
-                      activeIcon: CNSymbol('person.3.fill'),
-                    ),
-                    CNTabBarItem(
-                      label: '儀錶板',
-                      icon: CNSymbol('square.grid.2x2'),
-                      activeIcon: CNSymbol('square.grid.2x2.fill'),
-                    ),
-                    CNTabBarItem(
-                      label: '數據',
-                      icon: CNSymbol('chart.bar'),
-                      activeIcon: CNSymbol('chart.bar.fill'),
-                    ),
-                    CNTabBarItem(
-                      label: '個人',
-                      icon: CNSymbol('person'),
-                      activeIcon: CNSymbol('person.fill'),
-                    ),
-                  ],
-                  currentIndex: _currentIndex,
-                  onTap: (index) {
-                    if (_currentIndex != index) {
-                      setState(() => _currentIndex = index);
-                    }
-                  },
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Colors.green.shade50,
+                      Colors.green.shade100,
+                      Colors.white,
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
+            Positioned.fill(
+              child: IndexedStack(
+                index: _currentIndex,
+                children: const [
+                  ClassesTab(),
+                  DashboardTab(),
+                  QuestionsTab(),
+                  StatisticsTab(),
+                  ProfileTab(),
+                ],
+              ),
+            ),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: _buildTeacherBottomTabBar(
+                shouldInsetBottomTabBar: shouldInsetBottomTabBar,
+                bottomBarExtraPadding: bottomBarExtraPadding,
+                extendBarThroughHomeIndicator: extendBarThroughHomeIndicator,
+              ),
+            ),
+            if (showLoadingOverlay)
+              const SgqMainLoadingOverlay(message: '準備中...'),
+          ],
         ),
       ),
     );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _buildMainTabScaffold(showLoadingOverlay: _isTabBarWarmingUp);
   }
 }
