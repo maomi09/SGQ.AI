@@ -19,6 +19,8 @@ import '../../widgets/student_feedback_prompt_dialog.dart';
 import '../../services/student_feedback_prompt_service.dart';
 import '../../config/app_config.dart';
 import '../../widgets/sgq_main_loading_overlay.dart';
+import '../../widgets/sgq_floating_glass_tab_bar.dart';
+import 'dart:io' show Platform;
 
 class StudentMainScreen extends StatefulWidget {
   const StudentMainScreen({super.key});
@@ -97,7 +99,7 @@ class _StudentMainScreenState extends State<StudentMainScreen> {
     }
 
     if (mounted) {
-      if (classProvider.studentClass != null) {
+      if (classProvider.studentClass != null && !Platform.isAndroid) {
         await _warmUpTabBarLabels();
       }
       setState(() {
@@ -255,10 +257,49 @@ class _StudentMainScreenState extends State<StudentMainScreen> {
 
   /// 非 iOS 26：TabBar 背景延伸至螢幕底，Home Indicator 區用內距留白，避免 SafeArea 外側空隙。
   Widget _buildStudentBottomTabBar({
+    required bool isAndroid,
     required bool shouldInsetBottomTabBar,
     required double bottomBarExtraPadding,
     required bool extendBarThroughHomeIndicator,
   }) {
+    if (isAndroid) {
+      return SafeArea(
+        top: false,
+        bottom: true,
+        child: SgqFloatingGlassTabBar(
+          currentIndex: _currentIndex,
+          bottomMargin: bottomBarExtraPadding,
+          items: const [
+            SgqFloatingGlassTabItem(
+              label: '文法重點',
+              icon: Icons.flag_outlined,
+              activeIcon: Icons.flag,
+            ),
+            SgqFloatingGlassTabItem(
+              label: '出題重點提醒',
+              icon: Icons.format_list_bulleted_outlined,
+              activeIcon: Icons.format_list_bulleted,
+            ),
+            SgqFloatingGlassTabItem(
+              label: '出題區',
+              icon: Icons.check_circle_outline,
+              activeIcon: Icons.check_circle,
+            ),
+            SgqFloatingGlassTabItem(
+              label: '個人',
+              icon: Icons.person_outline,
+              activeIcon: Icons.person,
+            ),
+          ],
+          onTap: (index) {
+            if (_currentIndex != index) {
+              setState(() => _currentIndex = index);
+            }
+          },
+        ),
+      );
+    }
+
     final tabBar = CNTabBar(
       key: const ValueKey('student-main-tab-bar'),
       backgroundColor: Colors.transparent,
@@ -331,7 +372,7 @@ class _StudentMainScreenState extends State<StudentMainScreen> {
     final isIOS = platform == TargetPlatform.iOS;
     final shouldInsetBottomTabBar = isAndroid ? true : !PlatformVersion.shouldUseNativeGlass;
     final extendBarThroughHomeIndicator = isIOS && shouldInsetBottomTabBar;
-    final bottomBarExtraPadding = isAndroid ? 6.0 : 0.0;
+    final bottomBarExtraPadding = isAndroid ? 12.0 : 0.0;
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -373,6 +414,7 @@ class _StudentMainScreenState extends State<StudentMainScreen> {
               right: 0,
               bottom: 0,
               child: _buildStudentBottomTabBar(
+                isAndroid: isAndroid,
                 shouldInsetBottomTabBar: shouldInsetBottomTabBar,
                 bottomBarExtraPadding: bottomBarExtraPadding,
                 extendBarThroughHomeIndicator: extendBarThroughHomeIndicator,
