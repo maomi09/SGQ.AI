@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SGQ 教師題目匯出</title>
+    <link rel="icon" href="assets/sgq-logo.png" type="image/png" />
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="config.js"></script>
+  </head>
+  <body>
+    <div class="container">
+      <header class="site-header">
+        <div class="brand">
+          <img
+            class="brand-logo"
+            src="assets/sgq-logo.png"
+            width="72"
+            height="72"
+            alt="SGQ"
+          />
+          <div class="brand-text">
+            <h1>SGQ 教師題目匯出</h1>
+            <p>使用與 App 相同的教師帳號登入，將學生題目匯出為 Excel 或 CSV。</p>
+          </div>
+        </div>
+      </header>
+
+      <section id="login-section" class="card">
+        <h2>教師登入</h2>
+        <form id="login-form">
+          <label for="email">Email</label>
+          <input
+            id="email"
+            type="email"
+            autocomplete="username"
+            required
+            placeholder="與 App 相同的登入信箱"
+          />
+          <label for="password">密碼</label>
+          <input
+            id="password"
+            type="password"
+            autocomplete="current-password"
+            required
+          />
+          <button type="submit" class="primary">登入</button>
+        </form>
+      </section>
+
+      <section id="export-section" class="card hidden">
+        <div class="user-bar">
+          <span>已登入：<strong id="user-email"></strong></span>
+          <button type="button" id="logout-btn" class="secondary">登出</button>
+        </div>
+        <h2>匯出條件</h2>
+
+        <label for="class-select">班級（選填）</label>
+        <select id="class-select"></select>
+        <p class="hint">選班級後會篩選學生與課程單元。</p>
+
+        <label for="topic-select">課程單元</label>
+        <select id="topic-select"></select>
+        <p class="hint">依單元匯出全班題目時請選擇單元。</p>
+
+        <label for="student-select">學生（選填）</label>
+        <select id="student-select"></select>
+        <p class="hint">
+          若只選學生、不選單元，會匯出該生所有課程的題目。若同時選單元與學生，則為該生在該單元的題目。
+        </p>
+
+        <div class="row">
+          <button type="button" id="btn-xlsx" class="primary">下載 Excel (.xlsx)</button>
+          <button type="button" id="btn-csv" class="secondary">下載 CSV</button>
+        </div>
+      </section>
+
+      <div id="status" class="status info hidden" role="status"></div>
+    </div>
+    <script src="app.js"></script>
+  </body>
+</html>

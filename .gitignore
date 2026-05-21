@@ -36,6 +36,10 @@ app/*.iml
 .DS_Store
 Thumbs.db
 
+# Teacher export deploy (local SSH params)
+web/teacher-export/deploy/deploy-params.ps1
+web/app-landing/deploy/deploy-params.ps1
+
 # Logs
 *.log
 

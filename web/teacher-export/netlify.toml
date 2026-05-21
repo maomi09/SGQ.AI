@@ -1,0 +1,9 @@
+# Netlify 靜態部署設定（將整個 teacher-export 資料夾拖曳上傳即可）
+[build]
+  publish = "."
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"

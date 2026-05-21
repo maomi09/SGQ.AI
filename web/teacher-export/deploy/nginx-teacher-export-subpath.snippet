@@ -1,0 +1,11 @@
+# 掛在 api.sagp-qp.com 的 server { } 內、location / 之前
+# include /etc/nginx/snippets/sgq-teacher-export.conf;
+
+location = /teacher-export {
+    return 301 /teacher-export/;
+}
+
+location /teacher-export/ {
+    alias /var/www/sgq-teacher-export/;
+    index index.html;
+}

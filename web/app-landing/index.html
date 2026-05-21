@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="SGQ 學習系統 — 支援大學 EFL 學生進行文法出題與 AI 鷹架式學習的教育 App。"
+    />
+    <title>SGQ 學習系統</title>
+    <link rel="icon" href="assets/sgq-logo.png" type="image/png" />
+    <link rel="stylesheet" href="styles.css" />
+    <script src="config.js"></script>
+  </head>
+  <body>
+    <div class="page-bg" aria-hidden="true">
+      <div class="page-bg-gradient"></div>
+      <span class="page-bg-blob page-bg-blob-1"></span>
+      <span class="page-bg-blob page-bg-blob-2"></span>
+      <span class="page-bg-blob page-bg-blob-3"></span>
+    </div>
+
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="#top">
+          <img
+            class="brand-logo"
+            src="assets/sgq-logo.png"
+            width="48"
+            height="48"
+            alt="SGQ"
+          />
+          <span id="header-app-name">SGQ 學習系統</span>
+        </a>
+        <nav class="header-nav">
+          <a href="#features">功能</a>
+          <a href="#download">下載</a>
+          <a href="#support">聯絡客服</a>
+          <a href="#links" class="nav-teachers">教師專區</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="top">
+      <section id="download" class="hero">
+        <div class="container hero-grid">
+          <div class="hero-copy">
+            <p class="eyebrow">大學 EFL · 學生生成題目 · AI 鷹架</p>
+            <h1 id="hero-title">SGQ 學習系統</h1>
+            <p id="hero-tagline" class="lead">
+              支援大學 EFL 學生進行學生生成文法問題（SGQ）活動的教育應用程式。
+            </p>
+            <p class="version" id="version-label"></p>
+            <div class="store-row" id="hero-stores"></div>
+          </div>
+          <div class="hero-visual">
+            <div class="phone-frame">
+              <div class="phone-screen">
+                <img src="assets/sgq-logo.png" alt="" width="120" height="120" />
+                <p>文法重點 · 出題 · AI 小幫手 · 徽章</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="features" class="section">
+        <div class="container">
+          <h2>功能特色</h2>
+          <div class="feature-grid">
+            <article class="feature-card">
+              <h3>學生端</h3>
+              <ul>
+                <li>查看文法重點與出題提醒</li>
+                <li>建立選擇題或問答題</li>
+                <li>ChatGPT 四階段鷹架引導</li>
+                <li>完成題目獲得徽章</li>
+              </ul>
+            </article>
+            <article class="feature-card">
+              <h3>教師端</h3>
+              <ul>
+                <li>班級與課程單元管理</li>
+                <li>儀錶板掌握學習進度</li>
+                <li>題目檢視與評語</li>
+                <li>使用數據統計</li>
+              </ul>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="support" class="section section-alt">
+        <div class="container support-layout">
+          <div class="support-intro">
+            <h2>聯絡客服</h2>
+            <p class="section-desc support-desc">
+              使用 App 或網站時有問題？請留下訊息，我們會以 Email 回覆（非即時線上聊天）。
+            </p>
+            <p class="support-email-line">
+              客服信箱：<a id="support-email-link" class="text-link" href="#">sgqaiapp@gmail.com</a>
+            </p>
+            <a id="support-mailto-btn" class="btn-outline" href="#">直接寄信給客服</a>
+          </div>
+          <div class="support-panel">
+            <h3 class="support-panel-title">傳送訊息</h3>
+            <form id="support-form" class="support-form" novalidate>
+              <label for="support-name">您的稱呼</label>
+              <input id="support-name" type="text" required maxlength="80" placeholder="姓名或暱稱" />
+              <label for="support-user-email">您的 Email（方便回覆）</label>
+              <input id="support-user-email" type="email" required maxlength="120" placeholder="example@school.edu" />
+              <label for="support-role">身分</label>
+              <select id="support-role" required>
+                <option value="學生">學生</option>
+                <option value="教師">教師</option>
+                <option value="其他">其他</option>
+              </select>
+              <label for="support-message">訊息內容</label>
+              <textarea
+                id="support-message"
+                required
+                maxlength="2000"
+                rows="5"
+                placeholder="請描述問題或建議，我們會盡快以 Email 回覆。"
+              ></textarea>
+              <button type="submit" class="btn-primary">透過 Email 送出訊息</button>
+              <p class="form-hint">按下後會開啟您的郵件 App，請在該處確認並寄出。</p>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <section id="links" class="section">
+        <div class="container links-grid">
+          <article class="link-card">
+            <h3>教師匯出題目</h3>
+            <p>在電腦瀏覽器匯出學生題目為 Excel，需使用教師帳號登入。</p>
+            <a id="teacher-export-link" class="text-link" href="#">前往教師匯出網站</a>
+          </article>
+          <article class="link-card" id="privacy-card">
+            <h3>隱私權</h3>
+            <p>了解我們如何處理與保護您的資料。</p>
+            <a id="privacy-link" class="text-link" href="#">隱私權政策</a>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <p><span id="footer-app-name">SGQ 學習系統</span> · <span id="footer-domain">app.sagp-qp.com</span></p>
+        <p class="footer-meta" id="footer-support"></p>
+      </div>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>
