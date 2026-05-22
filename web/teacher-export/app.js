@@ -13,6 +13,11 @@
 
   const $ = (id) => document.getElementById(id);
 
+  const backLink = $('back-to-landing');
+  if (backLink && cfg.appLandingUrl) {
+    backLink.href = cfg.appLandingUrl;
+  }
+
   const loginSection = $('login-section');
   const exportSection = $('export-section');
   const statusEl = $('status');
@@ -32,12 +37,39 @@
     statusEl.classList.add('hidden');
   }
 
-  function isTeacher(user) {
-    const role =
+  function roleFromAuthMetadata(user) {
+    return (
       user?.user_metadata?.role ||
       user?.app_metadata?.role ||
-      user?.raw_user_meta_data?.role;
-    return role === 'teacher';
+      user?.raw_user_meta_data?.role ||
+      null
+    );
+  }
+
+  function normalizeRole(role) {
+    return String(role || '')
+      .trim()
+      .toLowerCase();
+  }
+
+  /** 與 App 相同：優先 users 表，再 fallback Auth metadata */
+  async function resolveIsTeacher(user) {
+    if (!user?.id) return false;
+
+    const { data, error } = await supabase
+      .from('users')
+      .select('role')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    if (!error && data?.role != null && data.role !== '') {
+      return normalizeRole(data.role) === 'teacher';
+    }
+    if (error) {
+      console.warn('resolveIsTeacher users lookup:', error.message || error);
+    }
+
+    return normalizeRole(roleFromAuthMetadata(user)) === 'teacher';
   }
 
   function formatOptions(options) {
@@ -329,7 +361,7 @@
 
   async function checkSession() {
     const { data } = await supabase.auth.getSession();
-    if (data.session && isTeacher(data.session.user)) {
+    if (data.session && (await resolveIsTeacher(data.session.user))) {
       await showExportUi(data.session);
       return true;
     }
@@ -348,9 +380,9 @@
         password,
       });
       if (error) throw error;
-      if (!isTeacher(data.user)) {
+      if (!(await resolveIsTeacher(data.user))) {
         await supabase.auth.signOut();
-        setStatus('此帳號不是教師，無法使用匯出功能。', 'error');
+        setStatus('此帳號不是教師，無法使用匯出功能。請確認為教師帳號，或聯絡客服協助。', 'error');
         return;
       }
       await showExportUi(data.session);

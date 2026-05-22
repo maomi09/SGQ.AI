@@ -31,6 +31,23 @@ body {
   margin-bottom: 4px;
 }
 
+.header-top {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.back-landing {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--primary);
+  text-decoration: none;
+}
+
+.back-landing:hover {
+  text-decoration: underline;
+}
+
 .brand {
   display: flex;
   align-items: center;
