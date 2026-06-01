@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta
+      name="description"
+      content="SGQ 學生學習數據 — 使用 App 帳號登入，查看題目、徽章與學習統計。"
+    />
+    <title>學習數據 | SGQ AI</title>
+    <link rel="icon" href="assets/sgq-logo.png" type="image/png" />
+    <link rel="stylesheet" href="styles.css?v=20260602" />
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="config.js?v=20260602"></script>
+    <script src="i18n.js?v=20260602"></script>
+  </head>
+  <body class="page-student" data-page="student">
+    <div class="page-bg" aria-hidden="true">
+      <div class="page-bg-gradient"></div>
+      <span class="page-bg-blob page-bg-blob-1"></span>
+      <span class="page-bg-blob page-bg-blob-2"></span>
+      <span class="page-bg-blob page-bg-blob-3"></span>
+    </div>
+
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="/">
+          <img class="brand-logo" src="assets/sgq-logo.png" width="48" height="48" alt="SGQ" />
+          <span data-i18n="student.brand">SGQ 學習數據</span>
+        </a>
+        <nav class="header-nav">
+          <a href="/" data-i18n="nav.home">返回官網</a>
+        </nav>
+        <div class="header-lang" data-lang-switch></div>
+      </div>
+    </header>
+
+    <main class="portal-page">
+      <div class="container portal-container portal-container--auth">
+        <section id="login-section" class="portal-card portal-card-login">
+          <div class="portal-login-header">
+            <img src="assets/sgq-logo.png" width="56" height="56" alt="" class="portal-login-logo" />
+            <div>
+              <h1 data-i18n="student.loginTitle">學生登入</h1>
+              <p class="portal-lead" data-i18n="student.loginLead">使用與 SGQ App 相同的 Email 與密碼，查看您的學習數據。</p>
+            </div>
+          </div>
+          <form id="login-form" class="portal-form" novalidate>
+            <div class="portal-field">
+              <label for="email" data-i18n="student.emailLabel">Email</label>
+              <input
+                id="email"
+                type="email"
+                autocomplete="username"
+                required
+                data-i18n-placeholder="student.emailPlaceholder"
+                placeholder="註冊時使用的信箱"
+              />
+            </div>
+            <div class="portal-field">
+              <label for="password" data-i18n="student.passwordLabel">密碼</label>
+              <input
+                id="password"
+                type="password"
+                autocomplete="current-password"
+                required
+                data-i18n-placeholder="student.passwordPlaceholder"
+                placeholder="請輸入密碼"
+              />
+            </div>
+            <button type="submit" class="btn-primary btn-primary-lg" data-i18n="student.loginBtn">登入</button>
+          </form>
+          <p class="portal-note">
+            <span data-i18n="student.teacherNote">教師請使用</span>
+            <a href="#" id="export-link" class="text-link" data-i18n="student.teacherLink">教師匯出網站</a><span data-i18n="student.teacherNoteSuffix">。</span>
+          </p>
+        </section>
+
+        <section id="dashboard-section" class="portal-card hidden">
+          <div class="portal-user-bar">
+            <div>
+              <p class="portal-greeting"><span data-i18n="student.greeting">您好，</span><strong id="student-name">—</strong></p>
+              <p class="portal-meta" id="student-meta"></p>
+            </div>
+            <button type="button" id="logout-btn" class="btn-outline" data-i18n="student.logout">登出</button>
+          </div>
+
+          <div id="stats-grid" class="stats-grid"></div>
+
+          <h2 class="portal-section-title" data-i18n="student.stageTitle">各階段題目數</h2>
+          <div id="stage-bars" class="stage-bars"></div>
+
+          <h2 class="portal-section-title" data-i18n="student.recentTitle">最近建立的題目</h2>
+          <div class="table-wrap">
+            <table class="data-table" id="recent-questions-table">
+              <thead>
+                <tr>
+                  <th data-i18n="student.th.topic">課程單元</th>
+                  <th data-i18n="student.th.type">題型</th>
+                  <th data-i18n="student.th.stage">階段</th>
+                  <th data-i18n="student.th.created">建立時間</th>
+                </tr>
+              </thead>
+              <tbody id="recent-questions-body"></tbody>
+            </table>
+          </div>
+          <p id="no-questions" class="portal-empty hidden" data-i18n="student.noQuestions">尚無題目記錄，請在 App 開始出題。</p>
+
+          <h2 class="portal-section-title" data-i18n="student.badgesTitle">已獲得徽章</h2>
+          <ul id="badges-list" class="badges-list"></ul>
+          <p id="no-badges" class="portal-empty hidden" data-i18n="student.noBadges">尚無徽章，完成題目後可獲得。</p>
+
+          <h2 class="portal-section-title" data-i18n="student.topicStatsTitle">各課程學習統計</h2>
+          <div class="table-wrap">
+            <table class="data-table" id="topic-stats-table">
+              <thead>
+                <tr>
+                  <th data-i18n="student.th.topic">課程單元</th>
+                  <th data-i18n="student.th.completed">完成題數</th>
+                  <th data-i18n="student.th.logins">登入次數</th>
+                  <th data-i18n="student.th.minutes">使用分鐘</th>
+                </tr>
+              </thead>
+              <tbody id="topic-stats-body"></tbody>
+            </table>
+          </div>
+          <p id="no-topic-stats" class="portal-empty hidden" data-i18n="student.noTopicStats">尚無課程統計資料。</p>
+        </section>
+
+        <div id="status" class="status info hidden" role="status"></div>
+      </div>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container footer-inner">
+        <p>SGQ 學習系統 · <a href="/">app.sagp-qp.com</a></p>
+      </div>
+    </footer>
+
+    <script src="student.js?v=20260602"></script>
+  </body>
+</html>

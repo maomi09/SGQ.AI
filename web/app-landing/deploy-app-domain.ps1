@@ -34,7 +34,11 @@ if ([string]::IsNullOrWhiteSpace($SshKeyPath) -or -not (Test-Path $SshKeyPath)) 
   exit 1
 }
 
-$webFiles = @("index.html", "privacy.html", "app.js", "styles.css", "config.js", "robots.txt", "sitemap.xml")
+$webFiles = @(
+  "index.html", "privacy.html", "student.html",
+  "student.js", "app.js", "i18n.js", "sgq-recaptcha.js",
+  "styles.css", "config.js", "robots.txt", "sitemap.xml"
+)
 # Optional: copy google*.html Search Console verification into web\app-landing\ before deploy
 $googleVerify = Get-ChildItem -Path $Root -Filter "google*.html" -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($googleVerify) { $webFiles += $googleVerify.Name }

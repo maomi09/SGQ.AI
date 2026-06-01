@@ -14,4 +14,9 @@ window.SGQ_APP_LANDING = {
   privacyPolicyUrl: 'https://app.sagp-qp.com/privacy.html',
   supportEmail: 'sgqaiapp@gmail.com',
   supportSubjectPrefix: 'SGQ App 客服',
+
+  web3formsAccessKey: '',
+
+  supabaseUrl: 'https://your-project.supabase.co',
+  supabaseAnonKey: 'your-anon-key',
 };

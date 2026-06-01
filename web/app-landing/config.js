@@ -23,4 +23,16 @@ window.SGQ_APP_LANDING = {
 
   // mailto subject prefix
   supportSubjectPrefix: 'SGQ App 客服',
+
+  // Web3Forms 免費寄信（https://web3forms.com 註冊後填入；留空則改用 mailto）
+  web3formsAccessKey: '03c98c93-0a2e-4ee7-a063-efdf99554229',
+
+  // reCAPTCHA 暫停使用（下課後可再啟用；見 sgq-recaptcha.js）
+  // recaptchaVersion: 'v2',
+  // recaptchaSiteKey: '',
+
+  // 學生學習數據頁（與 App 相同 Supabase）
+  supabaseUrl: 'https://iqmhqdkpultzyzurolwv.supabase.co',
+  supabaseAnonKey:
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlxbWhxZGtwdWx0enl6dXJvbHd2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU4MDc1NzMsImV4cCI6MjA4MTM4MzU3M30.OfBqLiwFQLjyuJwkgU1Vu1eedjrzkeVsSznQAnR9B9Q',
 };

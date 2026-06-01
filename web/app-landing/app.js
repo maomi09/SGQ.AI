@@ -1,5 +1,11 @@
 (function () {
   const cfg = window.SGQ_APP_LANDING || {};
+  const I18n = window.SGQ_I18N;
+
+  function t(key, params) {
+    return I18n ? I18n.t(key, params) : key;
+  }
+
   const playUrl = (cfg.playStoreUrl || '').trim();
   const iosUrl = (cfg.appStoreUrl || '').trim();
   const teacherUrl = (cfg.teacherExportUrl || '').trim();
@@ -16,12 +22,16 @@
     if (el && text) el.textContent = text;
   }
 
-  setText('header-app-name', appName);
-  setText('hero-title', appName);
-  setText('hero-tagline', tagline);
-  setText('footer-app-name', appName);
+  function updateAppNames() {
+    setText('header-app-name', appName);
+    setText('hero-title', appName);
+    setText('hero-tagline', tagline);
+    setText('footer-app-name', appName);
+  }
 
-  (function setVersionLabel() {
+  updateAppNames();
+
+  function updateVersionLabel() {
     const v = document.getElementById('version-label');
     if (!v) return;
     const android = (cfg.androidVersion || '').trim();
@@ -31,13 +41,15 @@
     if (android) parts.push('Android ' + android);
     if (ios) parts.push('iOS ' + ios);
     if (parts.length) {
-      v.textContent = '目前版本 ' + parts.join(' · ');
+      v.textContent = t('version.prefix') + parts.join(' · ');
     } else if (legacy) {
-      v.textContent = '目前版本 ' + legacy;
+      v.textContent = t('version.prefix') + legacy;
     } else {
       v.classList.add('hidden');
     }
-  })();
+  }
+
+  updateVersionLabel();
 
   const googleBadge =
     (cfg.googlePlayBadge || 'assets/google-play-badge.png').trim();
@@ -55,7 +67,7 @@
       el.rel = 'noopener noreferrer';
     } else {
       el.setAttribute('aria-disabled', 'true');
-      el.title = '即將上架';
+      el.title = t('store.comingSoon');
     }
     const img = document.createElement('img');
     img.className = 'store-badge-img store-badge-img--' + store;
@@ -70,6 +82,7 @@
   function fillStores(containerId) {
     const root = document.getElementById(containerId);
     if (!root) return;
+    root.innerHTML = '';
     root.appendChild(
       createStoreBadge(
         playUrl,
@@ -91,13 +104,15 @@
   fillStores('hero-stores');
 
   const teacherLink = document.getElementById('teacher-export-link');
+  const exportCardDesc = document.getElementById('export-card-desc');
   if (teacherLink) {
     if (teacherUrl) {
       teacherLink.href = teacherUrl;
     } else {
       teacherLink.classList.add('hidden');
-      teacherLink.parentElement.querySelector('p').textContent =
-        '教師匯出功能網址尚未設定。';
+      if (exportCardDesc) {
+        exportCardDesc.textContent = t('links.export.missing');
+      }
     }
   }
 
@@ -119,15 +134,20 @@
     }
   }
 
-  const footerSupport = document.getElementById('footer-support');
-  if (footerSupport && supportEmail) {
-    footerSupport.innerHTML =
-      '客服：<a href="mailto:' +
-      supportEmail +
-      '">' +
-      supportEmail +
-      '</a>';
+  function updateFooterSupport() {
+    const footerSupport = document.getElementById('footer-support');
+    if (footerSupport && supportEmail) {
+      footerSupport.innerHTML =
+        t('footer.supportPrefix') +
+        '<a href="mailto:' +
+        supportEmail +
+        '">' +
+        supportEmail +
+        '</a>';
+    }
   }
+
+  updateFooterSupport();
 
   function buildMailtoUrl(subject, body) {
     const params = new URLSearchParams();
@@ -148,15 +168,23 @@
   }
 
   const supportForm = document.getElementById('support-form');
+  const web3formsKey = (cfg.web3formsAccessKey || '').trim();
+
+  document.addEventListener('sgq:langchange', function () {
+    updateVersionLabel();
+    updateFooterSupport();
+    fillStores('hero-stores');
+  });
+
   if (supportForm && supportEmail) {
-    supportForm.addEventListener('submit', function (e) {
+    supportForm.addEventListener('submit', async function (e) {
       e.preventDefault();
       const name = document.getElementById('support-name').value.trim();
       const userEmail = document.getElementById('support-user-email').value.trim();
       const role = document.getElementById('support-role').value;
       const message = document.getElementById('support-message').value.trim();
       if (!name || !userEmail || !message) {
-        alert('請填寫稱呼、Email 與訊息內容。');
+        alert(t('support.fillRequired'));
         return;
       }
       const subject = supportSubjectPrefix + ' - ' + role;
@@ -170,6 +198,47 @@
         '\n\n訊息：\n' +
         message +
         '\n\n---\n由 app.sagp-qp.com 聯絡表單送出';
+
+      const submitBtn = supportForm.querySelector('button[type="submit"]');
+      const prevLabel = submitBtn ? submitBtn.textContent : '';
+
+      if (web3formsKey) {
+        if (submitBtn) {
+          submitBtn.disabled = true;
+          submitBtn.textContent = t('support.sending');
+        }
+        try {
+          const payload = {
+            access_key: web3formsKey,
+            subject: subject,
+            from_name: name,
+            email: userEmail,
+            message: body,
+            replyto: userEmail,
+          };
+          const res = await fetch('https://api.web3forms.com/submit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          const data = await res.json();
+          if (!res.ok || !data.success) {
+            throw new Error(data.message || 'send failed');
+          }
+          supportForm.reset();
+          alert(t('support.sent'));
+        } catch (err) {
+          console.error(err);
+          alert(t('support.fail'));
+        } finally {
+          if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = prevLabel || t('support.submit');
+          }
+        }
+        return;
+      }
+
       window.location.href = buildMailtoUrl(subject, body);
     });
   }
